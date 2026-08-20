@@ -2,29 +2,14 @@ import json
 import os
 import re
 import urllib.request
-import xml.etree.ElementTree as ET
+import urllib.parse
 from datetime import datetime
-import email.utils
 
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
-# 多來源高可用備援節點清單 (包含 Farside 動態路由器與分散式 RSSHub 節點)
-ENDPOINTS = [
-    # 1. Farside 智慧路由器 (自動轉向全球可用 Nitter 實例)
-    f"https://farside.link/nitter/{TARGET_HANDLE}/rss",
-    # 2. 多組獨立 RSSHub 公開鏡像節點
-    f"https://rsshub.app/twitter/user/{TARGET_HANDLE}",
-    f"https://rss.fatpandaph.com/twitter/user/{TARGET_HANDLE}",
-    f"https://hub.slqwq.top/twitter/user/{TARGET_HANDLE}",
-    f"https://rss.owo.nz/twitter/user/{TARGET_HANDLE}",
-    # 3. 備援 Nitter / xcancel 節點
-    f"https://nitter.net/{TARGET_HANDLE}/rss",
-    f"https://xcancel.com/{TARGET_HANDLE}/rss"
-]
-
 def load_existing_tweets(filepath):
-    """讀取本地現有推文資料庫"""
+    """讀取本地現存的推文資料庫"""
     if not os.path.exists(filepath):
         return []
     try:
@@ -42,114 +27,125 @@ def load_existing_tweets(filepath):
         print(f"⚠️ 讀取現有推文失敗: {e}")
         return []
 
-def clean_html_tags(raw_html):
-    """清理 RSS 描述中的 HTML 標籤，還原純文字"""
-    if not raw_html:
-        return ""
-    text = re.sub(r'<br\s*/?>', '\n', raw_html)
-    text = re.sub(r'<a\s+href="([^"]+)"[^>]*>.*?</a>', r'\1', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
-    return text.strip()
-
-def parse_rss_pubdate(pub_date_str):
-    """將 RFC 822 時間格式轉換為標準 ISO 時間字串"""
-    try:
-        parsed_tuple = email.utils.parsedate_tz(pub_date_str)
-        if parsed_tuple:
-            timestamp = email.utils.mktime_tz(parsed_tuple)
-            dt = datetime.utcfromtimestamp(timestamp)
-            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
-        pass
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-
-def fetch_tweets_from_feed():
-    """依序向備援清單發送請求，取得最新推文"""
+def fetch_via_allorigins_proxy(screen_name):
+    """方法一：透過 AllOrigins 雲端中繼代理繞過機房 IP 限制"""
+    target_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
+    proxy_url = f"https://api.allorigins.win/raw?url={urllib.parse.quote(target_url)}"
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*",
-        "Accept-Language": "en-US,en;q=0.9"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
 
-    for url in ENDPOINTS:
-        try:
-            print(f"📡 正在探測節點: {url}")
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as response:
-                if response.status != 200:
-                    print(f"  ⚠️ 狀態碼異常 ({response.status})，切換下一個...")
-                    continue
-                content = response.read()
-
-            # 解析 XML
-            root = ET.fromstring(content)
+    try:
+        print(f"📡 正在透過雲端中繼代理連線 Syndication 端點...")
+        req = urllib.request.Request(proxy_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as response:
+            html = response.read().decode("utf-8")
             
-            # 支援 RSS 2.0 (<channel><item>) 與 Atom (<feed><entry>) 結構
-            items = root.findall("./channel/item")
-            is_atom = False
-            if not items:
-                items = root.findall("{http://www.w3.org/2005/Atom}entry")
-                is_atom = bool(items)
+            match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
+            if not match:
+                print("  ℹ️ 未在代理回應中找到結構化 JSON，嘗試備援管道...")
+                return []
 
-            if not items:
-                print("  ℹ️ 節點回傳內容無推文項目，繼續嘗試備援節點...")
-                continue
-
+            data = json.loads(match.group(1))
+            entries = data.get("props", {}).get("pageProps", {}).get("timeline", {}).get("entries", [])
+            
             fetched_tweets = []
-            for item in items:
-                if not is_atom:
-                    title = item.findtext("title") or ""
-                    desc = item.findtext("description") or ""
-                    link = item.findtext("link") or ""
-                    guid = item.findtext("guid") or ""
-                    pub_date = item.findtext("pubDate") or ""
-                else:
-                    title = item.findtext("{http://www.w3.org/2005/Atom}title") or ""
-                    desc = item.findtext("{http://www.w3.org/2005/Atom}content") or item.findtext("{http://www.w3.org/2005/Atom}summary") or ""
-                    link_el = item.find("{http://www.w3.org/2005/Atom}link")
-                    link = link_el.attrib.get("href", "") if link_el is not None else ""
-                    guid = item.findtext("{http://www.w3.org/2005/Atom}id") or ""
-                    pub_date = item.findtext("{http://www.w3.org/2005/Atom}published") or item.findtext("{http://www.w3.org/2005/Atom}updated") or ""
+            for entry in entries:
+                tweet_raw = entry.get("content", {}).get("tweet")
+                if not tweet_raw:
+                    continue
 
-                text_content = clean_html_tags(desc) if desc else title.strip()
-                
-                # 擷取推文 ID
-                full_url = link or guid
-                tweet_id = ""
-                id_match = re.search(r"status/(\d+)", full_url)
-                if id_match:
-                    tweet_id = id_match.group(1)
-                elif guid:
-                    tweet_id = guid.split("/")[-1].replace("#m", "").strip()
+                tweet_id = str(tweet_raw.get("id_str") or tweet_raw.get("id", "")).strip()
+                text = tweet_raw.get("full_text") or tweet_raw.get("text", "")
+                created_at = tweet_raw.get("created_at", "")
+                fav_count = tweet_raw.get("favorite_count", 0)
+                rt_count = tweet_raw.get("retweet_count", 0)
+                views = tweet_raw.get("views", {}).get("count") if isinstance(tweet_raw.get("views"), dict) else 0
 
-                if tweet_id and text_content:
-                    iso_date = parse_rss_pubdate(pub_date)
-                    canonical_url = f"https://twitter.com/{TARGET_HANDLE}/status/{tweet_id}"
-                    
+                iso_date = ""
+                try:
+                    dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
+                    iso_date = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    iso_date = created_at
+
+                if tweet_id and text:
                     fetched_tweets.append({
                         "id": tweet_id,
-                        "text": text_content,
+                        "text": text,
                         "created_at": iso_date,
-                        "favorite_count": 0,
-                        "retweet_count": 0,
-                        "views": 0,
-                        "url": canonical_url
+                        "favorite_count": fav_count,
+                        "retweet_count": rt_count,
+                        "views": int(views) if views else 0,
+                        "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
                     })
 
             if fetched_tweets:
-                print(f"✨ 成功從節點取得 {len(fetched_tweets)} 則最新推文！")
+                print(f"✨ 成功透過中繼代理取得 {len(fetched_tweets)} 則推文！")
                 return fetched_tweets
 
-        except Exception as e:
-            print(f"  ⚠️ 節點連線失敗: {e}")
-            continue
+    except Exception as e:
+        print(f"  ⚠️ 代理連線失敗: {e}")
 
-    print("⚠️ 所有代理節點皆未回應，將維持既有推文快照。")
+    return []
+
+def fetch_via_jina_reader(screen_name):
+    """方法二：透過 Jina AI 雲端無頭瀏覽器代理擷取動態內容"""
+    url = f"https://r.jina.ai/https://x.com/{screen_name}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    try:
+        print(f"📡 正在透過 Jina 雲端瀏覽器渲染 X 頁面...")
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=25) as response:
+            content = response.read().decode("utf-8")
+
+        # 解析 Markdown 區塊中的推文連結與內容
+        tweet_blocks = re.findall(r'https://x\.com/' + screen_name + r'/status/(\d+)', content)
+        unique_ids = list(dict.fromkeys(tweet_blocks))
+
+        fetched_tweets = []
+        lines = content.split('\n')
+        
+        for t_id in unique_ids:
+            # 尋找該 ID 關聯的段落文字
+            related_text = ""
+            for idx, line in enumerate(lines):
+                if t_id in line:
+                    # 向上擷取上下文
+                    chunk = lines[max(0, idx-8):min(len(lines), idx+4)]
+                    filtered = [l.strip() for l in chunk if l.strip() and not l.startswith('http') and not l.startswith('[')]
+                    if filtered:
+                        related_text = " ".join(filtered)
+                    break
+            
+            if not related_text:
+                related_text = f"來自 @{screen_name} 的即時推文 (ID: {t_id})"
+
+            fetched_tweets.append({
+                "id": t_id,
+                "text": related_text,
+                "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "favorite_count": 0,
+                "retweet_count": 0,
+                "views": 0,
+                "url": f"https://twitter.com/{screen_name}/status/{t_id}"
+            })
+
+        if fetched_tweets:
+            print(f"✨ 成功透過 Jina 渲染器取得 {len(fetched_tweets)} 則推文！")
+            return fetched_tweets
+
+    except Exception as e:
+        print(f"  ⚠️ Jina 渲染器連線失敗: {e}")
+
     return []
 
 def save_merged_tweets(filepath, new_tweets):
-    """將新推文與現有資料庫合併去重並儲存"""
+    """與本地現有資料庫合併去重並儲存"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -162,9 +158,11 @@ def save_merged_tweets(filepath, new_tweets):
     added_count = 0
     for t in new_tweets:
         t_id = str(t.get("id", "")).strip()
-        if t_id and t_id not in tweets_map:
+        if t_id:
+            if t_id not in tweets_map:
+                added_count += 1
+            # 覆蓋更新最新資料
             tweets_map[t_id] = t
-            added_count += 1
 
     merged_list = list(tweets_map.values())
     merged_list.sort(key=lambda x: str(x.get("created_at", "") or x.get("date", "")), reverse=True)
@@ -172,9 +170,13 @@ def save_merged_tweets(filepath, new_tweets):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(merged_list, f, ensure_ascii=False, indent=2)
 
-    print(f"🎉 本次新增 {added_count} 則推文，目前推文資料庫總數: {len(merged_list)} 則。")
+    print(f"🎉 資料更新完成！本次新增 {added_count} 則推文，目前推文資料庫總計: {len(merged_list)} 則。")
 
 if __name__ == "__main__":
-    print(f"🔄 開始抓取 @{TARGET_HANDLE} 最新推文...")
-    recent_tweets = fetch_tweets_from_feed()
+    print(f"🔄 開始雲端抓取 @{TARGET_HANDLE} 的最新推文...")
+    # 優先嘗試中繼代理，若無結果則自動切換至無頭瀏覽器代理
+    recent_tweets = fetch_via_allorigins_proxy(TARGET_HANDLE)
+    if not recent_tweets:
+        recent_tweets = fetch_via_jina_reader(TARGET_HANDLE)
+        
     save_merged_tweets(TWEETS_FILE, recent_tweets)
