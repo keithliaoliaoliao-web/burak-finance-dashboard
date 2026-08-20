@@ -4,12 +4,16 @@ import re
 import urllib.request
 import urllib.parse
 from datetime import datetime
+import email.utils
 
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
+# Twitter 官方公開 Web 客戶端 Bearer Token
+TWITTER_WEB_BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+
 def load_existing_tweets(filepath):
-    """讀取本地現存的推文資料庫"""
+    """讀取本地現有推文資料庫"""
     if not os.path.exists(filepath):
         return []
     try:
@@ -27,30 +31,52 @@ def load_existing_tweets(filepath):
         print(f"⚠️ 讀取現有推文失敗: {e}")
         return []
 
-def fetch_via_allorigins_proxy(screen_name):
-    """方法一：透過 AllOrigins 雲端中繼代理繞過機房 IP 限制"""
-    target_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
-    proxy_url = f"https://api.allorigins.win/raw?url={urllib.parse.quote(target_url)}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-
+def fetch_via_twitter_guest_api(screen_name):
+    """第一層：透過 Twitter 官方訪客 Token 取得用戶推文"""
     try:
-        print(f"📡 正在透過雲端中繼代理連線 Syndication 端點...")
-        req = urllib.request.Request(proxy_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=20) as response:
-            html = response.read().decode("utf-8")
-            
+        print("🔑 正在向 Twitter 官方申請訪客授權金鑰 (Guest Token)...")
+        guest_req = urllib.request.Request(
+            "https://api.twitter.com/1.1/guest/activate.json",
+            headers={
+                "Authorization": TWITTER_WEB_BEARER,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Referer": "https://twitter.com/"
+            },
+            data=b""
+        )
+        
+        with urllib.request.urlopen(guest_req, timeout=10) as resp:
+            guest_data = json.loads(resp.read().decode("utf-8"))
+            guest_token = guest_data.get("guest_token")
+
+        if not guest_token:
+            print("⚠️ 未能取得 Guest Token，切換至備援管道。")
+            return []
+
+        print(f"✅ 成功取得 Guest Token，正在讀取 @{screen_name} 推文...")
+        
+        # 透過 Twitter Syndication 搭配 Guest Token 進行認證請求
+        timeline_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
+        timeline_req = urllib.request.Request(
+            timeline_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "x-guest-token": guest_token,
+                "Authorization": TWITTER_WEB_BEARER,
+                "Referer": f"https://twitter.com/{screen_name}"
+            }
+        )
+
+        with urllib.request.urlopen(timeline_req, timeout=15) as resp:
+            html = resp.read().decode("utf-8")
             match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
             if not match:
-                print("  ℹ️ 未在代理回應中找到結構化 JSON，嘗試備援管道...")
                 return []
 
             data = json.loads(match.group(1))
             entries = data.get("props", {}).get("pageProps", {}).get("timeline", {}).get("entries", [])
             
-            fetched_tweets = []
+            fetched = []
             for entry in entries:
                 tweet_raw = entry.get("content", {}).get("tweet")
                 if not tweet_raw:
@@ -71,7 +97,7 @@ def fetch_via_allorigins_proxy(screen_name):
                     iso_date = created_at
 
                 if tweet_id and text:
-                    fetched_tweets.append({
+                    fetched.append({
                         "id": tweet_id,
                         "text": text,
                         "created_at": iso_date,
@@ -81,71 +107,95 @@ def fetch_via_allorigins_proxy(screen_name):
                         "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
                     })
 
-            if fetched_tweets:
-                print(f"✨ 成功透過中繼代理取得 {len(fetched_tweets)} 則推文！")
-                return fetched_tweets
+            if fetched:
+                print(f"✨ 透過官方 Guest API 成功擷取 {len(fetched)} 則推文！")
+                return fetched
 
     except Exception as e:
-        print(f"  ⚠️ 代理連線失敗: {e}")
+        print(f"⚠️ 官方 Guest API 請求異常: {e}")
 
     return []
 
-def fetch_via_jina_reader(screen_name):
-    """方法二：透過 Jina AI 雲端無頭瀏覽器代理擷取動態內容"""
-    url = f"https://r.jina.ai/https://x.com/{screen_name}"
+def fetch_via_public_rss_mirrors(screen_name):
+    """第二層：透過活躍的社群 RSS 鏡像節點取得推文"""
+    mirrors = [
+        f"https://nitter.d420.de/{screen_name}/rss",
+        f"https://nitter.privacydev.net/{screen_name}/rss",
+        f"https://xcancel.com/{screen_name}/rss",
+        f"https://nitter.net/{screen_name}/rss"
+    ]
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*"
     }
 
-    try:
-        print(f"📡 正在透過 Jina 雲端瀏覽器渲染 X 頁面...")
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=25) as response:
-            content = response.read().decode("utf-8")
+    import xml.etree.ElementTree as ET
 
-        # 解析 Markdown 區塊中的推文連結與內容
-        tweet_blocks = re.findall(r'https://x\.com/' + screen_name + r'/status/(\d+)', content)
-        unique_ids = list(dict.fromkeys(tweet_blocks))
+    for url in mirrors:
+        try:
+            print(f"📡 嘗試連接備援鏡像: {url}")
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status != 200:
+                    continue
+                content = resp.read()
 
-        fetched_tweets = []
-        lines = content.split('\n')
-        
-        for t_id in unique_ids:
-            # 尋找該 ID 關聯的段落文字
-            related_text = ""
-            for idx, line in enumerate(lines):
-                if t_id in line:
-                    # 向上擷取上下文
-                    chunk = lines[max(0, idx-8):min(len(lines), idx+4)]
-                    filtered = [l.strip() for l in chunk if l.strip() and not l.startswith('http') and not l.startswith('[')]
-                    if filtered:
-                        related_text = " ".join(filtered)
-                    break
-            
-            if not related_text:
-                related_text = f"來自 @{screen_name} 的即時推文 (ID: {t_id})"
+            root = ET.fromstring(content)
+            items = root.findall("./channel/item")
+            if not items:
+                continue
 
-            fetched_tweets.append({
-                "id": t_id,
-                "text": related_text,
-                "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "favorite_count": 0,
-                "retweet_count": 0,
-                "views": 0,
-                "url": f"https://twitter.com/{screen_name}/status/{t_id}"
-            })
+            fetched = []
+            for item in items:
+                title = item.findtext("title") or ""
+                desc = item.findtext("description") or ""
+                link = item.findtext("link") or ""
+                guid = item.findtext("guid") or ""
+                pub_date = item.findtext("pubDate") or ""
 
-        if fetched_tweets:
-            print(f"✨ 成功透過 Jina 渲染器取得 {len(fetched_tweets)} 則推文！")
-            return fetched_tweets
+                text_content = desc or title
+                text_clean = re.sub(r'<[^>]+>', '', text_content).strip()
 
-    except Exception as e:
-        print(f"  ⚠️ Jina 渲染器連線失敗: {e}")
+                full_url = link or guid
+                tweet_id = ""
+                id_match = re.search(r"status/(\d+)", full_url)
+                if id_match:
+                    tweet_id = id_match.group(1)
+                elif guid:
+                    tweet_id = guid.split("/")[-1].replace("#m", "").strip()
+
+                iso_date = ""
+                try:
+                    parsed_tuple = email.utils.parsedate_tz(pub_date)
+                    if parsed_tuple:
+                        ts = email.utils.mktime_tz(parsed_tuple)
+                        iso_date = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    iso_date = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                if tweet_id and text_clean:
+                    fetched.append({
+                        "id": tweet_id,
+                        "text": text_clean,
+                        "created_at": iso_date,
+                        "favorite_count": 0,
+                        "retweet_count": 0,
+                        "views": 0,
+                        "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
+                    })
+
+            if fetched:
+                print(f"✨ 透過鏡像節點取得 {len(fetched)} 則推文！")
+                return fetched
+
+        except Exception as e:
+            print(f"  ⚠️ 鏡像 [{url}] 無法連線: {e}")
 
     return []
 
 def save_merged_tweets(filepath, new_tweets):
-    """與本地現有資料庫合併去重並儲存"""
+    """第三層：比對去重並更新本地資料庫"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -161,7 +211,6 @@ def save_merged_tweets(filepath, new_tweets):
         if t_id:
             if t_id not in tweets_map:
                 added_count += 1
-            # 覆蓋更新最新資料
             tweets_map[t_id] = t
 
     merged_list = list(tweets_map.values())
@@ -173,10 +222,11 @@ def save_merged_tweets(filepath, new_tweets):
     print(f"🎉 資料更新完成！本次新增 {added_count} 則推文，目前推文資料庫總計: {len(merged_list)} 則。")
 
 if __name__ == "__main__":
-    print(f"🔄 開始雲端抓取 @{TARGET_HANDLE} 的最新推文...")
-    # 優先嘗試中繼代理，若無結果則自動切換至無頭瀏覽器代理
-    recent_tweets = fetch_via_allorigins_proxy(TARGET_HANDLE)
-    if not recent_tweets:
-        recent_tweets = fetch_via_jina_reader(TARGET_HANDLE)
+    print(f"🔄 開始抓取 @{TARGET_HANDLE} 的最新推文...")
+    
+    # 依序執行雙層擷取機制
+    tweets = fetch_via_twitter_guest_api(TARGET_HANDLE)
+    if not tweets:
+        tweets = fetch_via_public_rss_mirrors(TARGET_HANDLE)
         
-    save_merged_tweets(TWEETS_FILE, recent_tweets)
+    save_merged_tweets(TWEETS_FILE, tweets)
