@@ -10,7 +10,6 @@ CACHE_FILE = "data/sentiment_cache.json"
 OUTPUT_HTML = "docs/index.html"
 
 def load_tweets(filepath):
-    """安全載入推文資料庫（支援多種 JSON 結構）"""
     if not os.path.exists(filepath):
         return []
     try:
@@ -29,7 +28,6 @@ def load_tweets(filepath):
         return []
 
 def load_cache(filepath):
-    """安全載入 AI 情緒快取資料"""
     if not os.path.exists(filepath):
         return {}
     try:
@@ -51,19 +49,13 @@ def load_cache(filepath):
         return {}
 
 def extract_tickers(text):
-    """從推文內文中萃取美股代號並過濾雜訊"""
     if not text:
         return []
     matches = re.findall(r"(?<!\w)\$([A-Z]{1,5})\b", text.upper())
-    blacklist = {
-        "USD", "USDT", "BTC", "ETH", "CAD", "EUR", "ATH", "CEO", "CFO", "CTO",
-        "AI", "FOMC", "FED", "CPI", "PPI", "GDP", "DD", "EOD", "YOLO", "NEW",
-        "BUY", "SELL", "HOLD", "CALL", "PUT", "AND", "THE", "TECH", "EV"
-    }
+    blacklist = {"USD", "CAD", "EUR", "ATH", "CEO", "AI", "FOMC", "FED", "CPI", "GDP", "DD", "EOD", "YOLO", "NEW", "BUY", "SELL"}
     return sorted(list(set(t for t in matches if t not in blacklist)))
 
 def extract_tweet_id(item):
-    """安全解析推文唯一 ID"""
     for k in ["id", "id_str", "tweet_id", "tweetId", "rest_id", "conversation_id"]:
         if k in item and item[k]:
             return str(item[k]).strip()
@@ -75,7 +67,6 @@ def extract_tweet_id(item):
     return ""
 
 def extract_tweet_text(item):
-    """安全解析推文文字內容"""
     for k in ["text", "rawContent", "full_text", "content", "tweet", "body", "message"]:
         if k in item and item[k]:
             return str(item[k])
@@ -85,17 +76,19 @@ def extract_tweet_text(item):
     return ""
 
 def parse_date(item):
-    """強大相容性日期解析器：輸出格式化日期、月份與標準 ISO 時間戳記"""
+    """強大相容性日期解析器"""
     raw_date = None
-    for k in ["date", "created_at", "createdAt", "timestamp", "datetime", "time"]:
-        if k in item and item[k]:
-            raw_date = item[k]
+    for k in ["created_at", "date", "createdAt", "timestamp", "datetime", "time", "pubDate"]:
+        val = item.get(k)
+        if val and not str(val).startswith("1970"):
+            raw_date = val
             break
+            
     if not raw_date:
         legacy = item.get("legacy") if isinstance(item.get("legacy"), dict) else {}
         raw_date = legacy.get("created_at")
 
-    if not raw_date:
+    if not raw_date or str(raw_date).startswith("1970"):
         return "未知時間", "未知月份", ""
 
     if isinstance(raw_date, (int, float)):
@@ -117,7 +110,8 @@ def parse_date(item):
 
     try:
         if "T" in s or "+" in s:
-            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            clean_s = s.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_s)
             return dt.strftime("%Y-%m-%d %H:%M"), dt.strftime("%Y-%m"), dt.isoformat()
     except Exception:
         pass
@@ -132,8 +126,12 @@ def parse_date(item):
     m = re.search(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
     if m:
         y, mth, d = m.groups()
+        time_part = ""
+        tm = re.search(r"(\d{1,2}):(\d{1,2})", s)
+        if tm:
+            time_part = f" {int(tm.group(1)):02d}:{int(tm.group(2)):02d}"
         iso = f"{int(y):04d}-{int(mth):02d}-{int(d):02d}T00:00:00"
-        return f"{int(y):04d}-{int(mth):02d}-{int(d):02d}", f"{int(y):04d}-{int(mth):02d}", iso
+        return f"{int(y):04d}-{int(mth):02d}-{int(d):02d}{time_part}", f"{int(y):04d}-{int(mth):02d}", iso
 
     return s, "未知月份", ""
 
@@ -160,22 +158,21 @@ def extract_metrics(item):
         if not isinstance(c, dict):
             continue
         if likes == 0:
-            val = get_num(c, ["likeCount", "likes", "like_count", "favorite_count", "favorites", "favoriteCount", "favs"])
+            val = get_num(c, ["favorite_count", "likeCount", "likes", "like_count", "favorites", "favoriteCount", "favs"])
             if val is not None:
                 likes = val
         if retweets == 0:
-            val = get_num(c, ["retweetCount", "retweets", "retweet_count", "reposts", "repost_count"])
+            val = get_num(c, ["retweet_count", "retweetCount", "retweets", "reposts", "repost_count"])
             if val is not None:
                 retweets = val
         if views == 0:
-            val = get_num(c, ["viewCount", "views", "view_count", "impression_count", "impressions"])
+            val = get_num(c, ["view_count", "viewCount", "views", "impression_count", "impressions"])
             if val is not None:
                 views = val
 
     return likes, retweets, views
 
 def clean_tweet_data(raw_tweets, sentiment_cache):
-    """清洗並整合推文資料與 AI 分析快取"""
     if isinstance(sentiment_cache, list):
         cache_dict = {}
         for item in sentiment_cache:
@@ -249,7 +246,7 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
     return cleaned, ticker_counts
 
 def fetch_stock_quotes(tickers):
-    """抓取關注標的之美股市場最新行情數據"""
+    """獲取美股市場行情數據"""
     print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情數據...", flush=True)
     quotes = {}
     
@@ -496,7 +493,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <!-- 浮動 AI 對話助理按鈕與對話面板 -->
   <div class="fixed bottom-6 right-6 z-50">
-    <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-sky-500 to-teal-400 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
+    <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 AI 助理</span>
     </button>
   </div>
@@ -516,14 +513,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="mt-2 flex flex-wrap gap-1.5">
           <button onclick="handleQuickAsk('日報')" class="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded border border-teal-500/30">📅 日報</button>
           <button onclick="handleQuickAsk('目前有哪些偏多股票？')" class="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded border border-teal-500/30">🚀 偏多股票</button>
-          <button onclick="handleQuickAsk('幫我看 NVDA')" class="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded border border-teal-500/30">🔍 幫我看 NVDA</button>
-          <button onclick="handleQuickAsk('TSM 有哪些風險？')" class="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded border border-rose-500/30">⚠️ TSM 風險</button>
+          <button onclick="handleQuickAsk('幫我看 NBIS')" class="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded border border-teal-500/30">🔍 幫我看 NBIS</button>
+          <button onclick="handleQuickAsk('AAOI 有哪些風險？')" class="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded border border-rose-500/30">⚠️ AAOI 風險</button>
         </div>
       </div>
     </div>
 
     <form onsubmit="handleChatSubmit(event)" class="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
-      <input type="text" id="chat-input" placeholder="輸入問題（例如：幫我看 NVDA）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-500" />
+      <input type="text" id="chat-input" placeholder="輸入問題（例如：幫我看 NBIS）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-500" />
       <button type="submit" class="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs transition">發送</button>
     </form>
   </div>
@@ -1042,7 +1039,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     function processChatIntent(query) {
       const q = query.toUpperCase();
       
-      // 1. 意圖：日報 / 今日
+      // 1. 意圖：日報
       if (q.includes('日報') || q.includes('今日')) {
         setViewMode('daily');
         const viewTweets = getFilteredByView(allTweets);
@@ -1061,7 +1058,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 2. 意圖：偏多股票總覽
+      // 2. 意圖：偏多股票
       if (q.includes('偏多') || q.includes('看多') || q.includes('BULLISH')) {
         const counts = {};
         allTweets.forEach(t => {
@@ -1088,7 +1085,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 3. 意圖：查詢特定標的或風險（如 "幫我看 NVDA" 或 "TSM 風險"）
+      // 3. 意圖：特定個股論點/風險
       const tickerMatch = q.match(/\\$?([A-Z]{1,5})/);
       const symbol = tickerMatch ? tickerMatch[1] : null;
 
@@ -1114,7 +1111,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           return;
         }
 
-        // 一般標的論點總覽
         let analysisHtml = `
           🎯 <b>\\$${symbol} 即時論點脈絡分析：</b><br>
           • <b>當前股價：</b>$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)<br>
@@ -1129,7 +1125,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 4. 通用搜尋 fallback
+      // 4. 通用搜尋
       searchQuery = query.toLowerCase();
       document.getElementById('search-input').value = query;
       render();
@@ -1155,7 +1151,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 def generate_html(tweets, ticker_counts, stock_quotes):
-    """將乾淨資料與行情注入模板並輸出 HTML"""
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
     tweets_json_str = json.dumps(tweets, ensure_ascii=False)
     ticker_counts_sorted = sorted(ticker_counts.items(), key=lambda x: x[1], reverse=True)[:35]
@@ -1168,14 +1163,13 @@ def generate_html(tweets, ticker_counts, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"🎉 Burak Finance 旗艦版儀表板成功產出至: {OUTPUT_HTML}", flush=True)
+    print(f"✅ 儀表板成功產出至 {OUTPUT_HTML}", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
     sentiment_cache = load_cache(CACHE_FILE)
     cleaned_tweets, counts = clean_tweet_data(tweets_raw, sentiment_cache)
     
-    # 取最活躍的前 35 檔標的抓取即時行情
     top_tickers_list = [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:35]]
     stock_quotes = fetch_stock_quotes(top_tickers_list)
     
