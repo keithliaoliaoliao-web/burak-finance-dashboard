@@ -1,0 +1,70 @@
+name: 產生並部署 Burak Finance 儀表板
+
+on:
+  schedule:
+    # 每天 UTC 00:05 與 12:05 自動排程執行（對應台灣時間 08:05 與 20:05）
+    - cron: '5 0,12 * * *'
+  workflow_dispatch:
+    inputs:
+      target_count:
+        description: '本次手動執行欲分析的推文數量'
+        required: false
+        default: '50'
+        type: string
+  push:
+    paths:
+      - 'scripts/**'
+      - 'data/tweets.json'
+      - '.github/workflows/build_dashboard.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 儲存庫
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 建立必要資料夾結構
+        run: |
+          mkdir -p data docs
+
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安裝 Python 套件
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-generativeai yfinance
+
+      - name: 執行 Gemini 情緒深度分析
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TOTAL_TARGET: ${{ inputs.target_count || '50' }}
+        run: |
+          python scripts/analyze_sentiment.py
+
+      - name: 執行編譯腳本產出 HTML
+        run: |
+          python scripts/build_html.py
+
+      - name: 提交更新至 repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add data/ docs/
+          
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: 自動更新 Burak Finance AI 快取與儀表板 [skip ci]"
+            git pull origin main --rebase -X theirs || git rebase --abort
+            git push origin main
+          else
+            echo "沒有檢測到任何資料或頁面變動，跳過提交。"
+          fi
