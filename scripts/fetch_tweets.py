@@ -1,15 +1,15 @@
-import asyncio
 import json
 import os
 import re
+import urllib.request
+import urllib.parse
 from datetime import datetime
-from twikit import Client
 
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
-AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN")
-CT0 = os.environ.get("TWITTER_CT0")
+AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN", "").strip()
+CT0 = os.environ.get("TWITTER_CT0", "").strip()
 
 def load_existing_tweets(filepath):
     """讀取本地現有推文資料庫"""
@@ -23,67 +23,80 @@ def load_existing_tweets(filepath):
         print(f"⚠️ 讀取現有推文失敗: {e}", flush=True)
         return []
 
-async def fetch_tweets_with_cookies(screen_name, count=50):
-    """透過 Twitter 登入憑證抓取目標帳號真實推文"""
+def fetch_tweets_authenticated(screen_name):
+    """透過 Twitter 官方認證 Session 讀取用戶最新推文串流"""
     if not AUTH_TOKEN or not CT0:
-        print("❌ 錯誤：未偵測到 TWITTER_AUTH_TOKEN 或 TWITTER_CT0 環境變數。", flush=True)
+        print("❌ 錯誤：未檢測到 TWITTER_AUTH_TOKEN 或 TWITTER_CT0 Secrets，無法進行認證請求。", flush=True)
         return []
 
-    print(f"🔑 正在載入 Twitter 驗證憑證並連線...", flush=True)
-    client = Client('en-US')
+    print(f"🔑 正在載入官方認證憑證，發起 @{screen_name} 推文請求...", flush=True)
     
-    # 注入瀏覽器 Cookie 憑證
-    client.set_cookies({
-        'auth_token': AUTH_TOKEN.strip(),
-        'ct0': CT0.strip()
-    })
+    url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
+    
+    # 注入瀏覽器標準認證 Headers 與 Cookies
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://platform.twitter.com/",
+        "Cookie": f"auth_token={AUTH_TOKEN}; ct0={CT0};",
+        "x-csrf-token": CT0
+    }
 
-    fetched = []
+    fetched_tweets = []
     try:
-        print(f"📡 正在查詢 @{screen_name} 的用戶資料與推文清單...", flush=True)
-        user = await client.get_user_by_screen_name(screen_name)
-        
-        # 抓取用戶主推文
-        tweets = await user.get_tweets('Tweets', count=count)
-        
-        for tw in tweets:
-            t_id = str(getattr(tw, 'id', '')).strip()
-            text = getattr(tw, 'text', '') or getattr(tw, 'full_text', '') or ""
-            created_at = getattr(tw, 'created_at', '')
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            html = response.read().decode("utf-8")
             
-            # 解析日期格式
-            iso_date = ""
-            try:
-                if created_at:
-                    dt = datetime.strptime(str(created_at), "%a %b %d %H:%M:%S %z %Y")
+            # 從結構化標籤中解析 __NEXT_DATA__
+            match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
+            if not match:
+                print("⚠️ 認證回應未找到結構化 JSON 資料區塊。", flush=True)
+                return []
+
+            data = json.loads(match.group(1))
+            entries = data.get("props", {}).get("pageProps", {}).get("timeline", {}).get("entries", [])
+            
+            for entry in entries:
+                tweet_raw = entry.get("content", {}).get("tweet")
+                if not tweet_raw:
+                    continue
+
+                tweet_id = str(tweet_raw.get("id_str") or tweet_raw.get("id", "")).strip()
+                text = tweet_raw.get("full_text") or tweet_raw.get("text", "")
+                created_at = tweet_raw.get("created_at", "")
+                fav_count = tweet_raw.get("favorite_count", 0)
+                rt_count = tweet_raw.get("retweet_count", 0)
+                views = tweet_raw.get("views", {}).get("count") if isinstance(tweet_raw.get("views"), dict) else 0
+
+                iso_date = ""
+                try:
+                    dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
                     iso_date = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-            except Exception:
-                iso_date = str(created_at)
+                except Exception:
+                    iso_date = str(created_at)
 
-            fav_count = getattr(tw, 'favorite_count', 0) or getattr(tw, 'likes', 0) or 0
-            rt_count = getattr(tw, 'retweet_count', 0) or getattr(tw, 'retweets', 0) or 0
-            views = getattr(tw, 'view_count', 0) or getattr(tw, 'views', 0) or 0
+                if tweet_id and text:
+                    fetched_tweets.append({
+                        "id": tweet_id,
+                        "text": text,
+                        "created_at": iso_date,
+                        "favorite_count": fav_count,
+                        "retweet_count": rt_count,
+                        "views": int(views) if views else 0,
+                        "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
+                    })
 
-            if t_id and text:
-                fetched.append({
-                    "id": t_id,
-                    "text": text,
-                    "created_at": iso_date,
-                    "favorite_count": int(fav_count),
-                    "retweet_count": int(rt_count),
-                    "views": int(views),
-                    "url": f"https://twitter.com/{screen_name}/status/{t_id}"
-                })
-
-        print(f"✨ 成功透過認證管道擷取 {len(fetched)} 則完整推文！", flush=True)
+            print(f"✨ [認證成功] 順利從官方資料流解析出 {len(fetched_tweets)} 則最新推文！", flush=True)
 
     except Exception as e:
-        print(f"⚠️ 擷取推文時發生異常: {e}", flush=True)
+        print(f"⚠️ 認證請求發生異常: {e}", flush=True)
 
-    return fetched
+    return fetched_tweets
 
 def save_merged_tweets(filepath, new_tweets):
-    """與現有資料庫進行比對、去重並增量儲存"""
+    """與現有資料庫比對去重並更新"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -95,7 +108,6 @@ def save_merged_tweets(filepath, new_tweets):
         if t_id:
             if t_id not in tweets_map:
                 added_count += 1
-            # 覆蓋更新最新數據
             tweets_map[t_id] = t
 
     merged_list = list(tweets_map.values())
@@ -107,7 +119,7 @@ def save_merged_tweets(filepath, new_tweets):
     print(f"📊 [結算報告] 本次新增推文: {added_count} 則 | 目前資料庫總推文數: {len(merged_list)} 則", flush=True)
 
 if __name__ == "__main__":
-    print(f"🚀 開始執行 @{TARGET_HANDLE} 認證推文擷取任務...", flush=True)
-    tweets = asyncio.run(fetch_tweets_with_cookies(TARGET_HANDLE, count=50))
+    print(f"🚀 開始執行 @{TARGET_HANDLE} 原生認證推文擷取任務...", flush=True)
+    tweets = fetch_tweets_authenticated(TARGET_HANDLE)
     save_merged_tweets(TWEETS_FILE, tweets)
     print("✅ 任務完成。", flush=True)
