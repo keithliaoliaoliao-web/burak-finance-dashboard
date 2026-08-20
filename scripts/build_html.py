@@ -4,6 +4,8 @@ import re
 from datetime import datetime
 import yfinance as yf
 
+# 核心設定與檔案路徑
+TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 CACHE_FILE = "data/sentiment_cache.json"
 OUTPUT_HTML = "docs/index.html"
@@ -27,7 +29,7 @@ def load_json(filepath):
         return [] if "tweets" in filepath else {}
 
 def extract_all_dynamic_tickers(tweets, sentiment_cache):
-    """全面動態挖掘所有出現過的股票代號"""
+    """全面動態挖掘推文與 AI 分析中所有出現過的美股代號"""
     ticker_counts = {}
     ticker_latest_tweet = {}
 
@@ -46,7 +48,7 @@ def extract_all_dynamic_tickers(tweets, sentiment_cache):
                 if sym_upper not in ticker_latest_tweet or created_at > ticker_latest_tweet[sym_upper]:
                     ticker_latest_tweet[sym_upper] = created_at
 
-    # 2. 從 Gemini AI 快取中擷取標籤
+    # 2. 從 Gemini AI 快取中擷取提及標籤
     for item in sentiment_cache.values():
         if isinstance(item, dict):
             tickers = item.get("tickers", [])
@@ -55,7 +57,7 @@ def extract_all_dynamic_tickers(tweets, sentiment_cache):
                 if sym_clean and sym_clean not in IGNORE_SYMBOLS and sym_clean.isalpha():
                     ticker_counts[sym_clean] = ticker_counts.get(sym_clean, 0) + 1
 
-    # 依被提及次數與最新時間排序
+    # 依被提及頻率與最新時間排序
     sorted_tickers = sorted(
         ticker_counts.keys(),
         key=lambda x: (ticker_counts[x], ticker_latest_tweet.get(x, "")),
@@ -66,14 +68,13 @@ def extract_all_dynamic_tickers(tweets, sentiment_cache):
     return sorted_tickers
 
 def fetch_market_quotes(ticker_list):
-    """批次抓取動態標的之市場最新數據"""
+    """批次抓取動態標的之即時市場數據"""
     quotes_data = {}
     if not ticker_list:
         return quotes_data
 
     print(f"📡 正在抓取 {len(ticker_list)} 檔標的的即時市場行情...", flush=True)
     
-    # 批次下載以提高效率
     symbols_query = " ".join(ticker_list)
     try:
         tickers = yf.Tickers(symbols_query)
@@ -108,11 +109,11 @@ def fetch_market_quotes(ticker_list):
     return quotes_data
 
 def generate_html_dashboard(tweets, sentiment_cache, quotes):
-    """產生現代化響應式儀表板 HTML"""
+    """產生響應式儀表板 HTML"""
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
     update_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # 組合卡片與標的展示 HTML
+    # 組合即時行情展示卡片
     quotes_cards = ""
     for sym, q in quotes.items():
         color_class = "text-emerald-400" if q["change_pct"] >= 0 else "text-rose-400"
@@ -132,6 +133,7 @@ def generate_html_dashboard(tweets, sentiment_cache, quotes):
         </div>
         """
 
+    # 組合推文串流與 AI 觀點卡片
     tweets_list_html = ""
     for tw in tweets[:60]:
         t_id = tw.get("id", "")
@@ -139,9 +141,8 @@ def generate_html_dashboard(tweets, sentiment_cache, quotes):
         created_at = tw.get("created_at", "")
         fav = tw.get("favorite_count", 0)
         rt = tw.get("retweet_count", 0)
-        url = tw.get("url", f"https://twitter.com/{TARGET_HANDLE}")
+        url = tw.get("url", f"https://twitter.com/{TARGET_HANDLE}/status/{t_id}" if t_id else f"https://twitter.com/{TARGET_HANDLE}")
         
-        # 關聯 AI 快取分析
         ai_data = sentiment_cache.get(t_id, {})
         sentiment = ai_data.get("sentiment", "中立") if isinstance(ai_data, dict) else "中立"
         summary = ai_data.get("summary_zh", "") if isinstance(ai_data, dict) else ""
