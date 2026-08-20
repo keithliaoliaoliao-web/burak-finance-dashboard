@@ -43,7 +43,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-generativeai yfinance
 
-      - name: 自動抓取 @burak_finance 最新推文
+      - name: 執行雲端代理抓取推文
         run: |
           python scripts/fetch_tweets.py
 
