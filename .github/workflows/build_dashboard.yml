@@ -2,7 +2,7 @@ name: 產生並部署 Burak Finance 儀表板
 
 on:
   schedule:
-    # 每天 UTC 00:05 與 12:05 自動排程執行（對應台灣時間 08:05 與 20:05）
+    # 每天 UTC 00:05 與 12:05 自動排程執行（台灣時間 08:05 與 20:05）
     - cron: '5 0,12 * * *'
   workflow_dispatch:
     inputs:
@@ -43,6 +43,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-generativeai yfinance
 
+      - name: 自動抓取 @burak_finance 最新推文
+        run: |
+          python scripts/fetch_tweets.py
+
       - name: 執行 Gemini 情緒深度分析
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -62,7 +66,7 @@ jobs:
           git add data/ docs/
           
           if ! git diff --staged --quiet; then
-            git commit -m "chore: 自動更新 Burak Finance AI 快取與儀表板 [skip ci]"
+            git commit -m "chore: 自動抓取推文、更新 AI 快取與儀表板 [skip ci]"
             git pull origin main --rebase -X theirs || git rebase --abort
             git push origin main
           else
