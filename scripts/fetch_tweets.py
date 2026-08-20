@@ -33,7 +33,6 @@ def fetch_tweets_syndication(screen_name):
         "Referer": "https://platform.twitter.com/"
     }
 
-    # 若有設定 Cookie Secrets 則注入驗證標頭
     if AUTH_TOKEN and CT0:
         headers["Cookie"] = f"auth_token={AUTH_TOKEN}; ct0={CT0};"
         headers["x-csrf-token"] = CT0
@@ -93,20 +92,27 @@ def fetch_tweets_syndication(screen_name):
     return fetched_tweets
 
 def save_merged_tweets(filepath, new_tweets):
-    """將新推文與現有資料庫合併去重並儲存"""
+    """將新推文與現有資料庫合併去重，並印出詳細狀態"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
     tweets_map = {str(t.get("id", "")).strip(): t for t in existing_tweets if t.get("id")}
 
     added_count = 0
+    updated_count = 0
+
     for t in new_tweets:
         t_id = str(t.get("id", "")).strip()
-        if t_id:
-            if t_id not in tweets_map:
-                added_count += 1
-            # 更新為最新數據
+        if not t_id:
+            continue
+
+        if t_id not in tweets_map:
             tweets_map[t_id] = t
+            added_count += 1
+        else:
+            # 既有推文已存在，同步更新最新的點讚與轉推數據
+            tweets_map[t_id] = t
+            updated_count += 1
 
     merged_list = list(tweets_map.values())
     merged_list.sort(key=lambda x: str(x.get("created_at", "") or x.get("date", "")), reverse=True)
@@ -114,7 +120,13 @@ def save_merged_tweets(filepath, new_tweets):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(merged_list, f, ensure_ascii=False, indent=2)
 
-    print(f"📊 [結算報告] 本次新增推文: {added_count} 則 | 目前推文資料庫總數: {len(merged_list)} 則", flush=True)
+    print(
+        f"📊 [結算報告] 本次抓取: {len(new_tweets)} 則 | "
+        f"全新新增: {added_count} 則 | "
+        f"既有推文更新互動數據: {updated_count} 則 | "
+        f"目前推文資料庫總數: {len(merged_list)} 則",
+        flush=True
+    )
 
 if __name__ == "__main__":
     print(f"🚀 開始執行 @{TARGET_HANDLE} 推文擷取流程...", flush=True)
