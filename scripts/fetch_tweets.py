@@ -9,12 +9,18 @@ import email.utils
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
-# 多節點備援清單 (包含 Nitter 鏡像與 Syndication RSS)
-RSS_MIRRORS = [
-    f"https://xcancel.com/{TARGET_HANDLE}/rss",
-    f"https://nitter.poast.org/{TARGET_HANDLE}/rss",
-    f"https://nitter.privacydev.net/{TARGET_HANDLE}/rss",
-    f"https://nitter.lucabased.xyz/{TARGET_HANDLE}/rss"
+# 多來源高可用備援節點清單 (包含 Farside 動態路由器與分散式 RSSHub 節點)
+ENDPOINTS = [
+    # 1. Farside 智慧路由器 (自動轉向全球可用 Nitter 實例)
+    f"https://farside.link/nitter/{TARGET_HANDLE}/rss",
+    # 2. 多組獨立 RSSHub 公開鏡像節點
+    f"https://rsshub.app/twitter/user/{TARGET_HANDLE}",
+    f"https://rss.fatpandaph.com/twitter/user/{TARGET_HANDLE}",
+    f"https://hub.slqwq.top/twitter/user/{TARGET_HANDLE}",
+    f"https://rss.owo.nz/twitter/user/{TARGET_HANDLE}",
+    # 3. 備援 Nitter / xcancel 節點
+    f"https://nitter.net/{TARGET_HANDLE}/rss",
+    f"https://xcancel.com/{TARGET_HANDLE}/rss"
 ]
 
 def load_existing_tweets(filepath):
@@ -37,13 +43,12 @@ def load_existing_tweets(filepath):
         return []
 
 def clean_html_tags(raw_html):
-    """清理 RSS 描述中的 HTML 標籤，保留純文字"""
+    """清理 RSS 描述中的 HTML 標籤，還原純文字"""
     if not raw_html:
         return ""
     text = re.sub(r'<br\s*/?>', '\n', raw_html)
     text = re.sub(r'<a\s+href="([^"]+)"[^>]*>.*?</a>', r'\1', text)
     text = re.sub(r'<[^>]+>', '', text)
-    # 解碼常見 HTML 實體
     text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
     return text.strip()
 
@@ -59,43 +64,59 @@ def parse_rss_pubdate(pub_date_str):
         pass
     return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def fetch_tweets_from_rss():
-    """依序嘗試備援鏡像節點抓取推文"""
+def fetch_tweets_from_feed():
+    """依序向備援清單發送請求，取得最新推文"""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/rss+xml, application/xml, text/xml, */*"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*",
+        "Accept-Language": "en-US,en;q=0.9"
     }
 
-    for url in RSS_MIRRORS:
+    for url in ENDPOINTS:
         try:
-            print(f"📡 嘗試透過節點抓取: {url}")
+            print(f"📡 正在探測節點: {url}")
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=12) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 if response.status != 200:
+                    print(f"  ⚠️ 狀態碼異常 ({response.status})，切換下一個...")
                     continue
-                xml_content = response.read()
+                content = response.read()
 
-            root = ET.fromstring(xml_content)
-            items = root.findall("./channel/item")
+            # 解析 XML
+            root = ET.fromstring(content)
             
+            # 支援 RSS 2.0 (<channel><item>) 與 Atom (<feed><entry>) 結構
+            items = root.findall("./channel/item")
+            is_atom = False
             if not items:
-                print(f"  ℹ️ 節點未回傳推文，嘗試下一個...")
+                items = root.findall("{http://www.w3.org/2005/Atom}entry")
+                is_atom = bool(items)
+
+            if not items:
+                print("  ℹ️ 節點回傳內容無推文項目，繼續嘗試備援節點...")
                 continue
 
             fetched_tweets = []
             for item in items:
-                title = item.findtext("title") or ""
-                description = item.findtext("description") or ""
-                link = item.findtext("link") or ""
-                guid = item.findtext("guid") or ""
-                pub_date = item.findtext("pubDate") or ""
+                if not is_atom:
+                    title = item.findtext("title") or ""
+                    desc = item.findtext("description") or ""
+                    link = item.findtext("link") or ""
+                    guid = item.findtext("guid") or ""
+                    pub_date = item.findtext("pubDate") or ""
+                else:
+                    title = item.findtext("{http://www.w3.org/2005/Atom}title") or ""
+                    desc = item.findtext("{http://www.w3.org/2005/Atom}content") or item.findtext("{http://www.w3.org/2005/Atom}summary") or ""
+                    link_el = item.find("{http://www.w3.org/2005/Atom}link")
+                    link = link_el.attrib.get("href", "") if link_el is not None else ""
+                    guid = item.findtext("{http://www.w3.org/2005/Atom}id") or ""
+                    pub_date = item.findtext("{http://www.w3.org/2005/Atom}published") or item.findtext("{http://www.w3.org/2005/Atom}updated") or ""
 
-                # 優先採用 description 內容並清理 HTML
-                text_content = clean_html_tags(description) if description else title.strip()
+                text_content = clean_html_tags(desc) if desc else title.strip()
                 
-                # 從連結擷取推文 ID
-                tweet_id = ""
+                # 擷取推文 ID
                 full_url = link or guid
+                tweet_id = ""
                 id_match = re.search(r"status/(\d+)", full_url)
                 if id_match:
                     tweet_id = id_match.group(1)
@@ -117,18 +138,18 @@ def fetch_tweets_from_rss():
                     })
 
             if fetched_tweets:
-                print(f"✅ 成功從 [{url}] 取得 {len(fetched_tweets)} 則最新推文！")
+                print(f"✨ 成功從節點取得 {len(fetched_tweets)} 則最新推文！")
                 return fetched_tweets
 
         except Exception as e:
-            print(f"  ⚠️ 節點 [{url}] 連線失敗: {e}")
+            print(f"  ⚠️ 節點連線失敗: {e}")
             continue
 
-    print("⚠️ 所有鏡像節點暫時無法存取，將維持現有推文資料。")
+    print("⚠️ 所有代理節點皆未回應，將維持既有推文快照。")
     return []
 
 def save_merged_tweets(filepath, new_tweets):
-    """比對去重並更新本地資料庫"""
+    """將新推文與現有資料庫合併去重並儲存"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -146,15 +167,14 @@ def save_merged_tweets(filepath, new_tweets):
             added_count += 1
 
     merged_list = list(tweets_map.values())
-    # 依時間新至舊排序
     merged_list.sort(key=lambda x: str(x.get("created_at", "") or x.get("date", "")), reverse=True)
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(merged_list, f, ensure_ascii=False, indent=2)
 
-    print(f"🎉 資料更新完成！本次新增 {added_count} 則推文，目前推文資料庫總計: {len(merged_list)} 則。")
+    print(f"🎉 本次新增 {added_count} 則推文，目前推文資料庫總數: {len(merged_list)} 則。")
 
 if __name__ == "__main__":
-    print(f"🔄 開始抓取 @{TARGET_HANDLE} 的最新推文...")
-    recent_tweets = fetch_tweets_from_rss()
+    print(f"🔄 開始抓取 @{TARGET_HANDLE} 最新推文...")
+    recent_tweets = fetch_tweets_from_feed()
     save_merged_tweets(TWEETS_FILE, recent_tweets)
