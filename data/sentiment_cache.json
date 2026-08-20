@@ -2,11 +2,11 @@
   "1826000000000000001": {
     "sentiment": "Bullish",
     "summary": "半導體供應鏈動能強勁看好NVDA與TSM",
-    "translation_zh": "看好 $NVDA 與 $TSM。半導體供應鏈在未來幾個季度展現出強勁的動能。"
+    "translation_zh": "看好 $NVDA 與 $TSM。半導體供應鏈在未來幾季展現出強勁的動能。"
   },
   "1826000000000000002": {
     "sentiment": "Neutral",
-    "summary": "獲利了結AMD轉往AVGO並關注AAOI壓力位",
-    "translation_zh": "對 $AMD 進行獲利了結，將資金配置轉移至 $AVGO。密切關注 $AAOI 在壓力位的表現。"
+    "summary": "獲利了結AMD資金轉入AVGO並關注AAOI",
+    "translation_zh": "對 $AMD 進行獲利了結，將配置轉移至 $AVGO。密切關注 $AAOI 在阻力位的表現。"
   }
 }
