@@ -4,16 +4,13 @@ import re
 import urllib.request
 import urllib.parse
 from datetime import datetime
-import email.utils
+import xml.etree.ElementTree as ET
 
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
-# Twitter 官方公開 Web 客戶端 Bearer Token
-TWITTER_WEB_BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-
 def load_existing_tweets(filepath):
-    """讀取本地現有推文資料庫"""
+    """讀取現有推文資料庫"""
     if not os.path.exists(filepath):
         return []
     try:
@@ -31,52 +28,34 @@ def load_existing_tweets(filepath):
         print(f"⚠️ 讀取現有推文失敗: {e}")
         return []
 
-def fetch_via_twitter_guest_api(screen_name):
-    """第一層：透過 Twitter 官方訪客 Token 取得用戶推文"""
+def fetch_via_clean_syndication(screen_name):
+    """通道一：Twitter 官方純淨 Syndication 端點 (不帶 Token，模擬標準嵌入組件)"""
+    url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}?showReplies=true"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://platform.twitter.com/",
+        "Sec-Fetch-Dest": "iframe",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site"
+    }
+
     try:
-        print("🔑 正在向 Twitter 官方申請訪客授權金鑰 (Guest Token)...")
-        guest_req = urllib.request.Request(
-            "https://api.twitter.com/1.1/guest/activate.json",
-            headers={
-                "Authorization": TWITTER_WEB_BEARER,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Referer": "https://twitter.com/"
-            },
-            data=b""
-        )
-        
-        with urllib.request.urlopen(guest_req, timeout=10) as resp:
-            guest_data = json.loads(resp.read().decode("utf-8"))
-            guest_token = guest_data.get("guest_token")
+        print(f"📡 [通道 1] 正在連線 Twitter 官方 Syndication 串流...")
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            html = response.read().decode("utf-8")
 
-        if not guest_token:
-            print("⚠️ 未能取得 Guest Token，切換至備援管道。")
-            return []
-
-        print(f"✅ 成功取得 Guest Token，正在讀取 @{screen_name} 推文...")
-        
-        # 透過 Twitter Syndication 搭配 Guest Token 進行認證請求
-        timeline_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
-        timeline_req = urllib.request.Request(
-            timeline_url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "x-guest-token": guest_token,
-                "Authorization": TWITTER_WEB_BEARER,
-                "Referer": f"https://twitter.com/{screen_name}"
-            }
-        )
-
-        with urllib.request.urlopen(timeline_req, timeout=15) as resp:
-            html = resp.read().decode("utf-8")
             match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
             if not match:
+                print("  ℹ️ Syndication 回應未包含 JSON 結構，嘗試下一個通道...")
                 return []
 
             data = json.loads(match.group(1))
             entries = data.get("props", {}).get("pageProps", {}).get("timeline", {}).get("entries", [])
             
-            fetched = []
+            fetched_tweets = []
             for entry in entries:
                 tweet_raw = entry.get("content", {}).get("tweet")
                 if not tweet_raw:
@@ -97,7 +76,7 @@ def fetch_via_twitter_guest_api(screen_name):
                     iso_date = created_at
 
                 if tweet_id and text:
-                    fetched.append({
+                    fetched_tweets.append({
                         "id": tweet_id,
                         "text": text,
                         "created_at": iso_date,
@@ -107,95 +86,119 @@ def fetch_via_twitter_guest_api(screen_name):
                         "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
                     })
 
-            if fetched:
-                print(f"✨ 透過官方 Guest API 成功擷取 {len(fetched)} 則推文！")
-                return fetched
+            if fetched_tweets:
+                print(f"  ✨ 成功從 Syndication 擷取 {len(fetched_tweets)} 則推文！")
+                return fetched_tweets
 
     except Exception as e:
-        print(f"⚠️ 官方 Guest API 請求異常: {e}")
+        print(f"  ⚠️ [通道 1] 連線失敗: {e}")
 
     return []
 
-def fetch_via_public_rss_mirrors(screen_name):
-    """第二層：透過活躍的社群 RSS 鏡像節點取得推文"""
-    mirrors = [
-        f"https://nitter.d420.de/{screen_name}/rss",
-        f"https://nitter.privacydev.net/{screen_name}/rss",
-        f"https://xcancel.com/{screen_name}/rss",
-        f"https://nitter.net/{screen_name}/rss"
-    ]
-    
+def fetch_via_sotwe_api(screen_name):
+    """通道二：Sotwe 公開社交資料 API"""
+    url = f"https://api.sotwe.com/v3/user/{screen_name}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/rss+xml, application/xml, text/xml, */*"
+        "Referer": f"https://www.sotwe.com/{screen_name}",
+        "Accept": "application/json"
     }
 
-    import xml.etree.ElementTree as ET
+    try:
+        print(f"📡 [通道 2] 正在連線 Sotwe API 端點...")
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
 
-    for url in mirrors:
-        try:
-            print(f"📡 嘗試連接備援鏡像: {url}")
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status != 200:
-                    continue
-                content = resp.read()
+            posts = data.get("data", []) or data.get("posts", [])
+            if not posts and isinstance(data, dict):
+                posts = data.get("user", {}).get("posts", [])
 
-            root = ET.fromstring(content)
-            items = root.findall("./channel/item")
-            if not items:
-                continue
-
-            fetched = []
-            for item in items:
-                title = item.findtext("title") or ""
-                desc = item.findtext("description") or ""
-                link = item.findtext("link") or ""
-                guid = item.findtext("guid") or ""
-                pub_date = item.findtext("pubDate") or ""
-
-                text_content = desc or title
-                text_clean = re.sub(r'<[^>]+>', '', text_content).strip()
-
-                full_url = link or guid
-                tweet_id = ""
-                id_match = re.search(r"status/(\d+)", full_url)
-                if id_match:
-                    tweet_id = id_match.group(1)
-                elif guid:
-                    tweet_id = guid.split("/")[-1].replace("#m", "").strip()
+            fetched_tweets = []
+            for post in posts:
+                tweet_id = str(post.get("id") or post.get("id_str") or "").strip()
+                text = post.get("text") or post.get("content") or ""
+                created_at = post.get("createdAt") or post.get("created_at") or ""
+                fav_count = post.get("likeCount", 0) or post.get("favorite_count", 0)
+                rt_count = post.get("retweetCount", 0) or post.get("retweet_count", 0)
 
                 iso_date = ""
-                try:
-                    parsed_tuple = email.utils.parsedate_tz(pub_date)
-                    if parsed_tuple:
-                        ts = email.utils.mktime_tz(parsed_tuple)
-                        iso_date = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
-                except Exception:
-                    iso_date = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                if isinstance(created_at, (int, float)):
+                    dt = datetime.utcfromtimestamp(created_at / 1000.0 if created_at > 1e11 else created_at)
+                    iso_date = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                else:
+                    iso_date = str(created_at)
 
-                if tweet_id and text_clean:
-                    fetched.append({
+                if tweet_id and text:
+                    fetched_tweets.append({
                         "id": tweet_id,
-                        "text": text_clean,
+                        "text": text,
                         "created_at": iso_date,
-                        "favorite_count": 0,
-                        "retweet_count": 0,
+                        "favorite_count": fav_count,
+                        "retweet_count": rt_count,
                         "views": 0,
                         "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
                     })
 
-            if fetched:
-                print(f"✨ 透過鏡像節點取得 {len(fetched)} 則推文！")
-                return fetched
+            if fetched_tweets:
+                print(f"  ✨ 成功從 Sotwe API 擷取 {len(fetched_tweets)} 則推文！")
+                return fetched_tweets
 
-        except Exception as e:
-            print(f"  ⚠️ 鏡像 [{url}] 無法連線: {e}")
+    except Exception as e:
+        print(f"  ⚠️ [通道 2] 連線失敗: {e}")
+
+    return []
+
+def fetch_via_google_feed(screen_name):
+    """通道三：Google 搜尋索引 RSS 備援"""
+    query = urllib.parse.quote(f"site:x.com/{screen_name} OR site:twitter.com/{screen_name}")
+    url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+
+    try:
+        print(f"📡 [通道 3] 正在透過 Google 索引備援擷取推文...")
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=12) as response:
+            content = response.read()
+
+        root = ET.fromstring(content)
+        items = root.findall("./channel/item")
+        
+        fetched_tweets = []
+        for item in items:
+            title = item.findtext("title") or ""
+            link = item.findtext("link") or ""
+            pub_date = item.findtext("pubDate") or ""
+            
+            # 從標題移除來源後綴
+            clean_title = re.sub(r' - [^-]+$', '', title).strip()
+            
+            tweet_id = str(abs(hash(clean_title)))[:18]
+            
+            if clean_title:
+                fetched_tweets.append({
+                    "id": tweet_id,
+                    "text": clean_title,
+                    "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "favorite_count": 0,
+                    "retweet_count": 0,
+                    "views": 0,
+                    "url": f"https://twitter.com/{screen_name}"
+                })
+
+        if fetched_tweets:
+            print(f"  ✨ 成功從 Google 索引擷取 {len(fetched_tweets)} 則公開推文內容！")
+            return fetched_tweets
+
+    except Exception as e:
+        print(f"  ⚠️ [通道 3] 連線失敗: {e}")
 
     return []
 
 def save_merged_tweets(filepath, new_tweets):
-    """第三層：比對去重並更新本地資料庫"""
+    """將新抓取的推文與現有資料庫合併去重"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -224,9 +227,11 @@ def save_merged_tweets(filepath, new_tweets):
 if __name__ == "__main__":
     print(f"🔄 開始抓取 @{TARGET_HANDLE} 的最新推文...")
     
-    # 依序執行雙層擷取機制
-    tweets = fetch_via_twitter_guest_api(TARGET_HANDLE)
-    if not tweets:
-        tweets = fetch_via_public_rss_mirrors(TARGET_HANDLE)
+    # 依序嘗試三個通道
+    results = fetch_via_clean_syndication(TARGET_HANDLE)
+    if not results:
+        results = fetch_via_sotwe_api(TARGET_HANDLE)
+    if not results:
+        results = fetch_via_google_feed(TARGET_HANDLE)
         
-    save_merged_tweets(TWEETS_FILE, tweets)
+    save_merged_tweets(TWEETS_FILE, results)
