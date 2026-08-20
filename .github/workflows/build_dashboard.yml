@@ -38,12 +38,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 安裝 Python 套件
+      - name: 安裝 Python 必要套件
         run: |
           python -m pip install --upgrade pip
-          pip install google-generativeai yfinance twikit
+          pip install google-generativeai yfinance
 
-      - name: 執行認證推文抓取
+      - name: 執行原生認證推文抓取
         env:
           TWITTER_AUTH_TOKEN: ${{ secrets.TWITTER_AUTH_TOKEN }}
           TWITTER_CT0: ${{ secrets.TWITTER_CT0 }}
