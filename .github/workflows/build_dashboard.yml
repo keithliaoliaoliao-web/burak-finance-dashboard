@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       target_count:
-        description: '本次手動執行欲分析的推文數量'
+        description: '本次手動執行欲抓取與分析的推文數量'
         required: false
-        default: '50'
+        default: '300'
         type: string
   push:
     paths:
@@ -43,14 +43,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-generativeai yfinance
 
-      - name: 執行雲端代理抓取推文
+      - name: 執行雲端多維度推文抓取
+        env:
+          FETCH_TARGET: ${{ inputs.target_count || '300' }}
         run: |
           python scripts/fetch_tweets.py
 
       - name: 執行 Gemini 情緒深度分析
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          TOTAL_TARGET: ${{ inputs.target_count || '50' }}
+          TOTAL_TARGET: ${{ inputs.target_count || '300' }}
         run: |
           python scripts/analyze_sentiment.py
 
