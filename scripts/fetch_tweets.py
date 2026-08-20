@@ -1,10 +1,10 @@
 import json
 import os
 import re
+import time
 import urllib.request
 import urllib.parse
 from datetime import datetime
-import xml.etree.ElementTree as ET
 
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
@@ -12,16 +12,11 @@ TWEETS_FILE = "data/tweets.json"
 AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN", "").strip()
 CT0 = os.environ.get("TWITTER_CT0", "").strip()
 
-# 常用美股熱門標的清單（用以全面擴展搜尋歷史推文）
-POPULAR_TICKERS = [
-    "$NVDA", "$TSM", "$AMD", "$AAPL", "$MSFT", "$GOOGL", "$AMZN", "$META",
-    "$AVGO", "$MRVL", "$AAOI", "$LITE", "$COHR", "$AXTI", "$SIVE", "$NBIS",
-    "$PLTR", "$SMCI", "$CRWD", "$PANW", "$ARM", "$QCOM", "$MU", "$INTC",
-    "$COIN", "$MSTR", "$HOOD", "$APP", "$BABA", "$PDD", "$NIO", "$TSLA"
-]
+# Twitter 官方公開 Web 授權 Bearer Token
+TWITTER_BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
 def load_existing_tweets(filepath):
-    """讀取本地現有推文資料庫"""
+    """讀取現有推文資料庫"""
     if not os.path.exists(filepath):
         return []
     try:
@@ -33,149 +28,191 @@ def load_existing_tweets(filepath):
         return []
 
 def get_auth_headers():
-    """建立 Twitter 官方認證請求標頭"""
-    headers = {
+    """建立 Twitter 官方 GraphQL 認證 Headers"""
+    return {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://twitter.com/",
-        "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+        "Referer": f"https://x.com/{TARGET_HANDLE}",
+        "Authorization": TWITTER_BEARER,
+        "Cookie": f"auth_token={AUTH_TOKEN}; ct0={CT0};",
+        "x-csrf-token": CT0,
         "x-twitter-active-user": "yes",
-        "x-twitter-auth-type": "OAuth2Session"
+        "x-twitter-auth-type": "OAuth2Session",
+        "x-twitter-client-language": "en"
     }
-    if AUTH_TOKEN and CT0:
-        headers["Cookie"] = f"auth_token={AUTH_TOKEN}; ct0={CT0};"
-        headers["x-csrf-token"] = CT0
-    return headers
 
-def extract_tweets_recursively(data, screen_name):
-    """全能遞迴解析器：從 Twitter 任何 JSON 結構中自動挖掘所有推文"""
-    extracted = []
-    seen = set()
-
-    def recurse(node):
-        if isinstance(node, dict):
-            # 檢查是否為推文節點
-            legacy = node.get("legacy") if isinstance(node.get("legacy"), dict) else node
-            text = legacy.get("full_text") or legacy.get("text") or node.get("full_text") or node.get("text")
-            t_id = legacy.get("id_str") or legacy.get("id") or node.get("id_str") or node.get("id")
-            created_at = legacy.get("created_at") or node.get("created_at")
-
-            if text and t_id and created_at and isinstance(text, str):
-                t_id_str = str(t_id).strip()
-                if t_id_str not in seen and len(text.strip()) > 0:
-                    seen.add(t_id_str)
-                    
-                    fav_count = legacy.get("favorite_count", 0) or node.get("favorite_count", 0) or 0
-                    rt_count = legacy.get("retweet_count", 0) or node.get("retweet_count", 0) or 0
-                    views_data = node.get("views") or legacy.get("views") or {}
-                    views = views_data.get("count", 0) if isinstance(views_data, dict) else (node.get("view_count", 0) or 0)
-
-                    iso_date = ""
-                    try:
-                        dt = datetime.strptime(str(created_at), "%a %b %d %H:%M:%S %z %Y")
-                        iso_date = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    except Exception:
-                        iso_date = str(created_at)
-
-                    extracted.append({
-                        "id": t_id_str,
-                        "text": text.strip(),
-                        "created_at": iso_date,
-                        "favorite_count": int(fav_count),
-                        "retweet_count": int(rt_count),
-                        "views": int(views),
-                        "url": f"https://twitter.com/{screen_name}/status/{t_id_str}"
-                    })
-
-            for val in node.values():
-                recurse(val)
-        elif isinstance(node, list):
-            for item in node:
-                recurse(item)
-
-    recurse(data)
-    return extracted
-
-def fetch_syndication_stream(screen_name):
-    """管道一：抓取官方首頁即時串流"""
-    url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
-    headers = get_auth_headers()
-    headers["Referer"] = "https://platform.twitter.com/"
-
-    print(f"📡 [管道 1] 正在讀取 @{screen_name} 首頁即時推文串流...", flush=True)
+def resolve_user_id(screen_name):
+    """取得用戶的唯一數字 ID (rest_id)"""
+    # 方式 1：從公開 Syndication 端點快速解析
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as response:
-            html = response.read().decode("utf-8")
-            match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
-            if match:
-                data = json.loads(match.group(1))
-                tweets = extract_tweets_recursively(data, screen_name)
-                print(f"  ✨ [管道 1 成功] 取得 {len(tweets)} 則最新推文！", flush=True)
-                return tweets
-    except Exception as e:
-        print(f"  ⚠️ [管道 1 異常]: {e}", flush=True)
-    return []
-
-def fetch_adaptive_search_stream(screen_name, query_text=""):
-    """管道二：官方認證 Adaptive Search 深度搜尋串流"""
-    query = f"from:{screen_name} {query_text}".strip()
-    encoded_q = urllib.parse.quote(query)
-    url = f"https://api.twitter.com/2/search/adaptive.json?q={encoded_q}&count=50&tweet_mode=extended"
-    headers = get_auth_headers()
-
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=12) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            return extract_tweets_recursively(data, screen_name)
+        url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode("utf-8")
+            m = re.search(r'"userId"\s*:\s*"(\d+)"', html) or re.search(r'"id_str"\s*:\s*"(\d+)"', html)
+            if m:
+                u_id = m.group(1)
+                print(f"🔍 成功解析 @{screen_name} 的 User ID: {u_id}", flush=True)
+                return u_id
     except Exception:
-        return []
+        pass
 
-def fetch_historical_ticker_rss(screen_name):
-    """管道三：多標的歷史 RSS 廣度補充"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-    rss_fetched = []
-    seen = set()
+    # 方式 2：透過 GraphQL UserByScreenName 查詢
+    try:
+        variables = json.dumps({"screen_name": screen_name, "withSafetyModeUserFields": True})
+        features = json.dumps({"hidden_profile_likes_enabled": True, "responsive_web_graphql_exclude_directive_enabled": True})
+        query_url = f"https://x.com/i/api/graphql/NdnUFFeSem-ABYWss0Ja3w/UserByScreenName?variables={urllib.parse.quote(variables)}&features={urllib.parse.quote(features)}"
+        
+        req = urllib.request.Request(query_url, headers=get_auth_headers())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            u_id = data.get("data", {}).get("user", {}).get("result", {}).get("rest_id")
+            if u_id:
+                print(f"🔍 成功透過 GraphQL 取得 User ID: {u_id}", flush=True)
+                return str(u_id)
+    except Exception as e:
+        print(f"⚠️ User ID 解析異常: {e}", flush=True)
 
-    for ticker in POPULAR_TICKERS:
-        try:
-            q = urllib.parse.quote(f"site:x.com/{screen_name} {ticker}")
-            feed_url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    return None
+
+def parse_graphql_timeline(data, screen_name):
+    """解析 Twitter GraphQL 回傳的結構化推文與下一頁游標"""
+    tweets = []
+    next_cursor = None
+    seen_ids = set()
+
+    instructions = (
+        data.get("data", {}).get("user", {}).get("result", {}).get("timeline_v2", {}).get("timeline", {}).get("instructions", []) or
+        data.get("data", {}).get("user", {}).get("result", {}).get("timeline", {}).get("timeline", {}).get("instructions", []) or
+        []
+    )
+
+    for inst in instructions:
+        entries = inst.get("entries", [])
+        if not entries and "entry" in inst:
+            entries = [inst["entry"]]
+
+        for entry in entries:
+            entry_id = entry.get("entryId", "")
             
-            req = urllib.request.Request(feed_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                xml_data = resp.read()
+            # 擷取下一頁的分頁游標 (Cursor)
+            if "cursor-bottom" in entry_id or "cursor-showMore" in entry_id:
+                content = entry.get("content", {})
+                next_cursor = content.get("value") or content.get("cursorType")
+                continue
 
-            root = ET.fromstring(xml_data)
-            for item in root.findall("./channel/item"):
-                title = item.findtext("title") or ""
-                clean_title = re.sub(r' - [^-]+$', '', title).strip()
-                if not clean_title or ticker.lower() not in clean_title.lower():
-                    continue
+            # 擷取推文實體
+            item_content = entry.get("content", {}).get("itemContent", {})
+            tweet_result = item_content.get("tweet_results", {}).get("result", {})
+            
+            # 支援轉發 (Retweet) 或一般推文
+            if "tweet" in tweet_result:
+                tweet_result = tweet_result["tweet"]
 
-                t_id = str(abs(hash(clean_title)))[:18]
-                if t_id not in seen:
-                    seen.add(t_id)
-                    rss_fetched.append({
-                        "id": t_id,
-                        "text": clean_title,
-                        "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "favorite_count": 0,
-                        "retweet_count": 0,
-                        "views": 0,
-                        "url": f"https://twitter.com/{screen_name}"
-                    })
-        except Exception:
-            continue
+            legacy = tweet_result.get("legacy", {})
+            t_id = str(tweet_result.get("rest_id") or legacy.get("id_str") or "").strip()
+            text = legacy.get("full_text") or legacy.get("text") or ""
+            created_at = legacy.get("created_at") or ""
 
-    return rss_fetched
+            if t_id and text and t_id not in seen_ids:
+                seen_ids.add(t_id)
+                fav_count = legacy.get("favorite_count", 0)
+                rt_count = legacy.get("retweet_count", 0)
+                views_data = tweet_result.get("views", {})
+                views = views_data.get("count", 0) if isinstance(views_data, dict) else 0
+
+                iso_date = ""
+                try:
+                    dt = datetime.strptime(str(created_at), "%a %b %d %H:%M:%S %z %Y")
+                    iso_date = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    iso_date = str(created_at)
+
+                tweets.append({
+                    "id": t_id,
+                    "text": text,
+                    "created_at": iso_date,
+                    "favorite_count": int(fav_count),
+                    "retweet_count": int(rt_count),
+                    "views": int(views) if str(views).isdigit() else 0,
+                    "url": f"https://twitter.com/{screen_name}/status/{t_id}"
+                })
+
+    return tweets, next_cursor
+
+def fetch_tweets_with_cursor_pagination(user_id, screen_name, max_pages=8):
+    """核心分頁函式：連續追蹤游標，批量回溯大量推文"""
+    all_tweets = []
+    cursor = None
+    headers = get_auth_headers()
+
+    features = json.dumps({
+        "responsive_web_graphql_exclude_directive_enabled": True,
+        "verified_phone_label_enabled": False,
+        "responsive_web_home_pinned_timelines_enabled": True,
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+        "tweetypie_unmention_optimization_enabled": True,
+        "vibe_api_enabled": True,
+        "responsive_web_edit_tweet_api_enabled": True,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+        "view_counts_everywhere_api_enabled": True,
+        "longform_notetweets_consumption_enabled": True,
+        "tweet_awards_web_tipping_enabled": False,
+        "freedom_of_speech_not_reach_fetch_enabled": True,
+        "standardized_nudges_misinfo": True,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+        "longform_notetweets_rich_text_read_enabled": True,
+        "longform_notetweets_inline_media_enabled": True,
+        "responsive_web_enhance_cards_enabled": False
+    })
+
+    print(f"🚀 開始執行 GraphQL 連續分頁抓取（目標上限: {max_pages} 頁）...", flush=True)
+
+    for page_idx in range(1, max_pages + 1):
+        variables_dict = {
+            "userId": user_id,
+            "count": 40,
+            "includePromotedContent": False,
+            "withQuickPromoteEligibilityTweetFields": True,
+            "withVoice": True,
+            "withV2Timeline": True
+        }
+        if cursor:
+            variables_dict["cursor"] = cursor
+
+        variables = json.dumps(variables_dict)
+        url = f"https://x.com/i/api/graphql/V7H0Ap3_Hh2FyS75OCDO3Q/UserTweets?variables={urllib.parse.quote(variables)}&features={urllib.parse.quote(features)}"
+
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                
+                page_tweets, next_cursor = parse_graphql_timeline(data, screen_name)
+                print(f"  📄 [第 {page_idx} 頁] 成功解析出 {len(page_tweets)} 則推文！", flush=True)
+
+                all_tweets.extend(page_tweets)
+
+                if not next_cursor or next_cursor == cursor or len(page_tweets) == 0:
+                    print("  🏁 已抵達時間軸末端或無更多分頁游標。", flush=True)
+                    break
+
+                cursor = next_cursor
+                time.sleep(1.5)  # 溫和間隔，避免頻率限制
+
+        except Exception as e:
+            print(f"  ⚠️ 第 {page_idx} 頁請求中斷: {e}", flush=True)
+            break
+
+    return all_tweets
 
 def save_merged_tweets(filepath, new_tweets):
-    """與現有資料庫合併、去重並由新到舊排序儲存"""
+    """比對去重並更新本地推文資料庫"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -187,7 +224,7 @@ def save_merged_tweets(filepath, new_tweets):
         if t_id:
             if t_id not in tweets_map:
                 added_count += 1
-            # 覆蓋更新最新數據
+            # 更新最新數據
             tweets_map[t_id] = t
 
     merged_list = list(tweets_map.values())
@@ -199,32 +236,16 @@ def save_merged_tweets(filepath, new_tweets):
     print(f"📊 [結算報告] 本次新增推文: {added_count} 則 | 目前推文資料庫總數: {len(merged_list)} 則", flush=True)
 
 if __name__ == "__main__":
-    print(f"🚀 啟動 @{TARGET_HANDLE} 深度推文收集引擎...", flush=True)
-    all_collected = []
+    if not AUTH_TOKEN or not CT0:
+        print("❌ 錯誤：未設定 TWITTER_AUTH_TOKEN 或 TWITTER_CT0 Secrets。", flush=True)
+        exit(0)
 
-    # 1. 抓取首頁最新即時串流
-    stream_tweets = fetch_syndication_stream(TARGET_HANDLE)
-    all_collected.extend(stream_tweets)
+    user_id = resolve_user_id(TARGET_HANDLE)
+    if not user_id:
+        print(f"❌ 無法取得 @{TARGET_HANDLE} 的 User ID，終止抓取流程。", flush=True)
+        exit(0)
 
-    # 2. 官方認證搜尋串流
-    print(f"🔍 [管道 2] 正在向 Twitter 官方發送深度時間軸搜尋...", flush=True)
-    base_search_tweets = fetch_adaptive_search_stream(TARGET_HANDLE, "")
-    print(f"  ✨ [管道 2 成功] 搜尋取得 {len(base_search_tweets)} 則推文！", flush=True)
-    all_collected.extend(base_search_tweets)
-
-    # 3. 針對美股重點標的發起多維度檢索
-    print(f"🔍 [管道 3] 正在針對熱門標的進行深入挖掘...", flush=True)
-    ticker_tweets_count = 0
-    for tk in POPULAR_TICKERS[:12]:
-        tk_tweets = fetch_adaptive_search_stream(TARGET_HANDLE, tk)
-        ticker_tweets_count += len(tk_tweets)
-        all_collected.extend(tk_tweets)
-    print(f"  ✨ [管道 3 成功] 個股檢索共挖掘出 {ticker_tweets_count} 則相關推文！", flush=True)
-
-    # 4. RSS 廣度補充
-    rss_tweets = fetch_historical_ticker_rss(TARGET_HANDLE)
-    all_collected.extend(rss_tweets)
-
-    # 5. 合併寫入
-    save_merged_tweets(TWEETS_FILE, all_collected)
+    # 執行 8 頁連續游標分頁抓取（約 150～300 則推文）
+    collected_tweets = fetch_tweets_with_cursor_pagination(user_id, TARGET_HANDLE, max_pages=8)
+    save_merged_tweets(TWEETS_FILE, collected_tweets)
     print("✅ 任務全部完成。", flush=True)
