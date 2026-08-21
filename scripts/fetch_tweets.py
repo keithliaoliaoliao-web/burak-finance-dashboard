@@ -15,14 +15,15 @@ TWEETS_FILE = "data/tweets.json"
 AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN", "").strip()
 CT0 = os.environ.get("TWITTER_CT0", "").strip()
 
+# Twitter 官方 Snowflake 起始紀元 (2010-11-04 01:42:54.657 UTC)
 TWITTER_EPOCH = 1288834974657
 
 def log(message):
-    """即時輸出日誌至 GitHub Actions 控制台"""
+    """即時強制輸出日誌至 GitHub Actions 控制台"""
     print(message, flush=True)
 
 def snowflake_to_iso(tweet_id_str):
-    """利用 Twitter Snowflake 演算法精確還原 UTC 發布時間"""
+    """利用 Twitter Snowflake 演算法由推文 ID 反推精確 UTC 發布時間"""
     try:
         t_id = int(str(tweet_id_str).strip())
         timestamp_ms = (t_id >> 22) + TWITTER_EPOCH
@@ -32,9 +33,9 @@ def snowflake_to_iso(tweet_id_str):
         return None
 
 def load_existing_tweets(filepath):
-    """讀取本地現有推文資料庫"""
+    """讀取本地現有推文資料庫並校驗格式"""
     if not os.path.exists(filepath):
-        log("ℹ️ 本地 tweets.json 不存在，將建立新檔案。")
+        log("ℹ️ 本地 tweets.json 不存在，將建立新資料庫。")
         return []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -60,7 +61,7 @@ def load_existing_tweets(filepath):
         return []
 
 def fetch_tweets_syndication(screen_name):
-    """軌道 1：Twitter 官方 Syndication 串流（精確捕獲最新貼文）"""
+    """透過 Twitter 官方 Syndication 串流抓取最新推文"""
     timestamp = int(time.time())
     url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}?t={timestamp}"
 
@@ -77,6 +78,8 @@ def fetch_tweets_syndication(screen_name):
         headers["Cookie"] = f"auth_token={AUTH_TOKEN}; ct0={CT0};"
         headers["x-csrf-token"] = CT0
         log("🔑 官方認證憑證 (Cookies) 注入成功。")
+    else:
+        log("⚠️ 未偵測到完整 Cookies，使用訪客模式連線。")
 
     fetched = []
     log(f"📡 [軌道 1] 正在連線 Twitter 官方串流抓取 @{screen_name} 最新發文...")
@@ -123,7 +126,7 @@ def fetch_tweets_syndication(screen_name):
     return fetched
 
 def enrich_and_expand_recent(tweets_list, target_count=35):
-    """軌道 2：即時互動數同步與長文完整內容還原"""
+    """軌道 2：即時互動指標同步與完整長文內文還原"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -164,7 +167,7 @@ def enrich_and_expand_recent(tweets_list, target_count=35):
     return tweets_list
 
 def save_merged_tweets(filepath, new_tweets):
-    """將新推文與現有資料庫合併去重，並依 Snowflake 真實發布時間降序儲存"""
+    """將新推文與現有資料庫合併去重，並依 Snowflake 時間降序儲存"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -196,7 +199,7 @@ def save_merged_tweets(filepath, new_tweets):
 
     merged_list = list(tweets_map.values())
 
-    # 嚴格按 Snowflake 精確 UTC 時間降序排序（最新發布排在最上面）
+    # 嚴格依 Snowflake 精確 UTC 時間由新到舊排序
     merged_list.sort(
         key=lambda x: str(x.get("created_at") or snowflake_to_iso(x.get("id")) or "1970-01-01T00:00:00Z"),
         reverse=True
@@ -218,6 +221,9 @@ def save_merged_tweets(filepath, new_tweets):
     if merged_list:
         latest = merged_list[0]
         log(f"🔝 資料庫最新第 1 筆推文: {latest.get('created_at')} (ID: {latest.get('id')}) | ❤️ {latest.get('favorite_count', 0)}  🔁 {latest.get('retweet_count', 0)}  👁️ {latest.get('views', 0)}")
+
+    if added_count == 0:
+        log("🟢 [狀態確認] 本地資料庫已同步至作者在 Twitter 上的最新發文，系統正處於即時監控中。")
 
 if __name__ == "__main__":
     log(f"🚀 開始執行 @{TARGET_HANDLE} 推文擷取與同步流程...")
