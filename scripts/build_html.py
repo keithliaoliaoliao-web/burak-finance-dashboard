@@ -4,10 +4,25 @@ import re
 from datetime import datetime
 import yfinance as yf
 
+# ==========================================
+# 參數設定區 (Burak Finance 專案)
+# ==========================================
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 CACHE_FILE = "data/sentiment_cache.json"
 OUTPUT_HTML = "docs/index.html"
+
+TWITTER_EPOCH = 1288834974657
+
+def snowflake_to_iso(tweet_id_str):
+    """利用 Twitter Snowflake 演算法計算精確發布時間"""
+    try:
+        t_id = int(str(tweet_id_str).strip())
+        timestamp_ms = (t_id >> 22) + TWITTER_EPOCH
+        dt = datetime.utcfromtimestamp(timestamp_ms / 1000.0)
+        return dt.strftime("%Y-%m-%d %H:%M"), dt.strftime("%Y-%m"), dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return None, None, None
 
 def load_tweets(filepath):
     if not os.path.exists(filepath):
@@ -24,7 +39,7 @@ def load_tweets(filepath):
                 return list(data.values())
             return []
     except Exception as e:
-        print(f"⚠️ 讀取推文檔案失敗 ({filepath}): {e}")
+        print(f"⚠️ 讀取推文檔案失敗 ({filepath}): {e}", flush=True)
         return []
 
 def load_cache(filepath):
@@ -45,15 +60,20 @@ def load_cache(filepath):
                 return cache_dict
             return {}
     except Exception as e:
-        print(f"⚠️ 讀取快取檔案失敗 ({filepath}): {e}")
+        print(f"⚠️ 讀取快取檔案失敗 ({filepath}): {e}", flush=True)
         return {}
 
 def extract_tickers(text):
+    """從推文內文中萃取美股代號（支援 1~6 字元）並過濾常用非股票詞彙"""
     if not text:
         return []
-    matches = re.findall(r"(?<!\w)\$([A-Z]{1,5})\b", text.upper())
-    blacklist = {"USD", "CAD", "EUR", "ATH", "CEO", "AI", "FOMC", "FED", "CPI", "GDP", "DD", "EOD", "YOLO", "NEW", "BUY", "SELL"}
-    return sorted(list(set(t for t in matches if t not in blacklist)))
+    matches = re.findall(r"(?<!\w)\$([A-Za-z]{1,6})\b", text)
+    blacklist = {
+        "USD", "USDT", "BTC", "ETH", "CAD", "EUR", "ATH", "CEO", "CFO", "CTO",
+        "AI", "FOMC", "FED", "CPI", "PPI", "GDP", "DD", "EOD", "YOLO", "NEW",
+        "BUY", "SELL", "HOLD", "CALL", "PUT", "AND", "THE", "TECH", "EV"
+    }
+    return sorted(list(set(t.upper() for t in matches if t.upper() not in blacklist and t.isalpha())))
 
 def extract_tweet_id(item):
     for k in ["id", "id_str", "tweet_id", "tweetId", "rest_id", "conversation_id"]:
@@ -75,8 +95,13 @@ def extract_tweet_text(item):
         return str(legacy["full_text"])
     return ""
 
-def parse_date(item):
-    """強大相容性日期解析器"""
+def parse_date(item, tweet_id=""):
+    """精確解析推文日期"""
+    if tweet_id and tweet_id.isdigit() and len(tweet_id) >= 10:
+        d_str, m_str, iso_str = snowflake_to_iso(tweet_id)
+        if d_str:
+            return d_str, m_str, iso_str
+
     raw_date = None
     for k in ["created_at", "date", "createdAt", "timestamp", "datetime", "time", "pubDate"]:
         val = item.get(k)
@@ -91,49 +116,16 @@ def parse_date(item):
     if not raw_date or str(raw_date).startswith("1970"):
         return "未知時間", "未知月份", ""
 
-    if isinstance(raw_date, (int, float)):
-        try:
-            val = float(raw_date)
-            dt = datetime.fromtimestamp(val / 1000.0 if val > 1e11 else val)
-            return dt.strftime("%Y-%m-%d %H:%M"), dt.strftime("%Y-%m"), dt.isoformat()
-        except Exception:
-            pass
-
     s = str(raw_date).strip()
-    if s.isdigit():
-        try:
-            val = float(s)
-            dt = datetime.fromtimestamp(val / 1000.0 if val > 1e11 else val)
-            return dt.strftime("%Y-%m-%d %H:%M"), dt.strftime("%Y-%m"), dt.isoformat()
-        except Exception:
-            pass
-
     try:
-        if "T" in s or "+" in s:
+        if "T" in s:
             clean_s = s.replace("Z", "+00:00")
             dt = datetime.fromisoformat(clean_s)
-            return dt.strftime("%Y-%m-%d %H:%M"), dt.strftime("%Y-%m"), dt.isoformat()
+            return dt.strftime("%Y-%m-%d %H:%M"), dt.strftime("%Y-%m"), s
     except Exception:
         pass
 
-    try:
-        if len(s.split()) >= 6:
-            dt = datetime.strptime(s, "%a %b %d %H:%M:%S %z %Y")
-            return dt.strftime("%Y-%m-%d %H:%M"), dt.strftime("%Y-%m"), dt.isoformat()
-    except Exception:
-        pass
-
-    m = re.search(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
-    if m:
-        y, mth, d = m.groups()
-        time_part = ""
-        tm = re.search(r"(\d{1,2}):(\d{1,2})", s)
-        if tm:
-            time_part = f" {int(tm.group(1)):02d}:{int(tm.group(2)):02d}"
-        iso = f"{int(y):04d}-{int(mth):02d}-{int(d):02d}T00:00:00"
-        return f"{int(y):04d}-{int(mth):02d}-{int(d):02d}{time_part}", f"{int(y):04d}-{int(mth):02d}", iso
-
-    return s, "未知月份", ""
+    return s, "未知月份", s
 
 def extract_metrics(item):
     """解析互動指標（點讚、轉推、瀏覽量）"""
@@ -186,8 +178,9 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
 
     cleaned = []
     ticker_counts = {}
+    recent_tickers = []  # 記錄近期推文出現的標的
 
-    for item in raw_tweets:
+    for idx, item in enumerate(raw_tweets):
         if not isinstance(item, dict):
             continue
 
@@ -196,12 +189,14 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
         if not text:
             continue
 
-        date_str, month_str, iso_date = parse_date(item)
+        date_str, month_str, iso_date = parse_date(item, tweet_id=tweet_id)
         tickers = extract_tickers(text)
         likes, retweets, views = extract_metrics(item)
 
         for t in tickers:
             ticker_counts[t] = ticker_counts.get(t, 0) + 1
+            if idx < 50 and t not in recent_tickers:
+                recent_tickers.append(t)  # 前 50 筆最新推文提及的股票優先記錄
 
         ai_data = sentiment_cache.get(tweet_id) if tweet_id else None
         sentiment = "Neutral"
@@ -243,11 +238,13 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
             "url": url or "#"
         })
 
-    return cleaned, ticker_counts
+    # 嚴格按時間降序排序（最新在最前）
+    cleaned.sort(key=lambda x: str(x.get("iso_date") or x.get("date") or ""), reverse=True)
+    return cleaned, ticker_counts, recent_tickers
 
 def fetch_stock_quotes(tickers):
     """獲取美股市場行情數據"""
-    print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情數據...", flush=True)
+    print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情數據 (含近期提及與熱門標的)...", flush=True)
     quotes = {}
     
     for symbol in tickers:
@@ -283,8 +280,8 @@ def fetch_stock_quotes(tickers):
                     "volume": int(volume) if volume else 0
                 }
                 print(f"  ✅ ${symbol}: ${current_price:.2f} ({change_pct:+.2f}%)", flush=True)
-        except Exception as e:
-            print(f"  ⚠️ 無法取得 ${symbol} 行情: {e}", flush=True)
+        except Exception:
+            continue
 
     return quotes
 
@@ -302,10 +299,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         extend: {
           colors: {
             brand: {
-              50: '#f0fdfa',
-              500: '#14b8a6',
-              600: '#0d9488',
-              900: '#134e4a',
+              50: '#fffbeb',
+              500: '#f59e0b',
+              600: '#d97706',
+              900: '#78350f',
             }
           }
         }
@@ -320,21 +317,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     ::-webkit-scrollbar-thumb:hover { background: #475569; }
   </style>
 </head>
-<body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-teal-500 selection:text-white">
+<body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white">
 
   <!-- 頂部導航 -->
   <header class="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-500 to-teal-400 flex items-center justify-center font-bold text-slate-950 text-base shadow-lg shadow-teal-500/20">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-400 flex items-center justify-center font-bold text-slate-950 text-base shadow-lg shadow-amber-500/20">
           B
         </div>
         <div>
           <h1 class="font-bold text-base sm:text-lg tracking-tight text-white flex items-center gap-2">
-            Burak Finance Tracker
-            <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20">Live</span>
+            Burak Tracker
+            <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Live</span>
           </h1>
-          <p class="text-xs text-slate-400 hidden sm:block">美股社群情報、AI 對話問答與論點脈絡</p>
+          <p class="text-xs text-slate-400 hidden sm:block">美股社群情報、AI 對話問答與個股論點脈絡</p>
         </div>
       </div>
 
@@ -360,7 +357,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <span class="text-xs font-medium text-slate-400">當前視圖提及推文</span>
           <div class="text-2xl font-bold text-white mt-1" id="stat-total">0</div>
         </div>
-        <div class="mt-2 text-[11px] text-teal-400 font-mono" id="stat-ai-coverage">AI 分析：0 / 0 (0%)</div>
+        <div class="mt-2 text-[11px] text-amber-400 font-mono" id="stat-ai-coverage">AI 分析：0 / 0 (0%)</div>
       </div>
       <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
         <div>
@@ -378,18 +375,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
       <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
         <div>
-          <span class="text-xs font-medium text-teal-400">視圖關注標的數</span>
-          <div class="text-2xl font-bold text-teal-400 mt-1" id="stat-tickers">0</div>
+          <span class="text-xs font-medium text-amber-400">視圖關注標的數</span>
+          <div class="text-2xl font-bold text-amber-400 mt-1" id="stat-tickers">0</div>
         </div>
         <div class="mt-2 text-[11px] text-slate-400">活躍討論股票</div>
       </div>
     </div>
 
-    <!-- 熱門標的快速過濾區 -->
+    <!-- 熱門與近期關注標的快速過濾區 (支援最新提及標的優先呈現) -->
     <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4">
       <div class="flex items-center justify-between mb-3">
-        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">熱門關注標的 ($TICKER)</h2>
-        <button id="clear-ticker-btn" onclick="filterByTicker('')" class="text-xs text-teal-400 hover:underline hidden">清除標的篩選</button>
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+          <span>🔥</span> 熱門與近期關注標的 ($TICKER)
+        </h2>
+        <button id="clear-ticker-btn" onclick="filterByTicker('')" class="text-xs text-amber-400 hover:underline hidden">清除標的篩選</button>
       </div>
       <div class="flex flex-wrap gap-1.5" id="top-tickers-bar"></div>
     </div>
@@ -399,7 +398,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         
         <div class="flex items-center gap-4 flex-wrap">
-          <div class="px-3 py-2 bg-slate-800 rounded-lg border border-slate-700 font-mono font-bold text-xl text-teal-400 shadow-inner" id="quote-ticker-name">
+          <div class="px-3 py-2 bg-slate-800 rounded-lg border border-slate-700 font-mono font-bold text-xl text-amber-400 shadow-inner" id="quote-ticker-name">
             $TICKER
           </div>
           <div>
@@ -414,7 +413,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
           <div class="flex items-center gap-2 ml-0 sm:ml-4">
-            <button onclick="openDeepDiveModal(currentTicker)" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-teal-500 text-slate-950 hover:bg-teal-400 transition flex items-center gap-1 shadow-sm">
+            <button onclick="openDeepDiveModal(currentTicker)" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 text-slate-950 hover:bg-amber-400 transition flex items-center gap-1 shadow-sm font-bold">
               🧠 AI 論點脈絡詳情
             </button>
             <button onclick="toggleTvChart()" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 transition">
@@ -443,11 +442,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div id="quote-52w-container" class="border-t border-slate-800/80 pt-3">
         <div class="flex justify-between text-xs text-slate-400 font-mono mb-1.5">
           <span>52 週最低：<b class="text-slate-200" id="quote-low52">$0.00</b></span>
-          <span class="text-teal-400 font-semibold" id="quote-range-pct">52 週區間水位 0%</span>
+          <span class="text-amber-400 font-semibold" id="quote-range-pct">52 週區間水位 0%</span>
           <span>52 週最高：<b class="text-slate-200" id="quote-high52">$0.00</b></span>
         </div>
         <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden flex items-center">
-          <div id="quote-range-bar" class="bg-gradient-to-r from-teal-600 to-cyan-400 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+          <div id="quote-range-bar" class="bg-gradient-to-r from-amber-600 to-yellow-400 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
         </div>
       </div>
 
@@ -461,10 +460,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- 搜尋、排序與觀點篩選 -->
     <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
       <div class="flex items-center gap-2 flex-1 max-w-lg">
-        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的..." 
-          class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition" />
+        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的（例如: SPCX, NBIS）..." 
+          class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition" />
         
-        <select id="sort-select" onchange="changeSort(this.value)" class="bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-teal-500 transition cursor-pointer shrink-0">
+        <select id="sort-select" onchange="changeSort(this.value)" class="bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-amber-500 transition cursor-pointer shrink-0">
           <option value="date_desc">🕒 最新發布</option>
           <option value="likes_desc">❤️ 最多按讚</option>
           <option value="views_desc">👁️ 最多瀏覽</option>
@@ -484,7 +483,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- 載入更多按鈕 -->
     <div class="text-center pt-2 pb-8" id="load-more-container">
-      <button onclick="loadMore()" class="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-teal-500/50 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition shadow-sm">
+      <button onclick="loadMore()" class="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-amber-500/50 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition shadow-sm">
         載入更多推文 (<span id="load-more-count">0 / 0</span>)
       </button>
     </div>
@@ -493,35 +492,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <!-- 浮動 AI 對話助理按鈕與對話面板 -->
   <div class="fixed bottom-6 right-6 z-50">
-    <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
-      💬 <span class="text-sm">問問 AI 助理</span>
+    <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
+      💬 <span class="text-sm">問問 Burak AI</span>
     </button>
   </div>
 
   <div id="ai-chat-drawer" class="fixed bottom-20 right-6 z-50 w-[92vw] sm:w-[420px] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col h-[520px]">
     <div class="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
       <div class="flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-teal-400 animate-ping"></span>
-        <span class="font-bold text-sm text-white">Burak AI 個股問答</span>
+        <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+        <span class="font-bold text-sm text-white">Burak Finance AI 問答</span>
       </div>
       <button onclick="toggleChatDrawer()" class="text-slate-400 hover:text-white font-bold p-1">✕</button>
     </div>
 
     <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs leading-relaxed">
       <div class="bg-slate-800/80 border border-slate-700/70 p-3 rounded-xl text-slate-200">
-        👋 你好！你可以直接問我：
+        👋 你好！我是 Burak AI 助理，你可以直接點擊或詢問：
         <div class="mt-2 flex flex-wrap gap-1.5">
-          <button onclick="handleQuickAsk('日報')" class="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded border border-teal-500/30">📅 日報</button>
-          <button onclick="handleQuickAsk('目前有哪些偏多股票？')" class="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded border border-teal-500/30">🚀 偏多股票</button>
-          <button onclick="handleQuickAsk('幫我看 NBIS')" class="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 px-2 py-0.5 rounded border border-teal-500/30">🔍 幫我看 NBIS</button>
-          <button onclick="handleQuickAsk('AAOI 有哪些風險？')" class="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded border border-rose-500/30">⚠️ AAOI 風險</button>
+          <button onclick="handleQuickAsk('日報')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">📅 日報</button>
+          <button onclick="handleQuickAsk('目前有哪些偏多股票？')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🚀 偏多股票</button>
+          <button onclick="handleQuickAsk('幫我看 NBIS')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 NBIS</button>
+          <button onclick="handleQuickAsk('幫我看 SPCX')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 SPCX</button>
         </div>
       </div>
     </div>
 
     <form onsubmit="handleChatSubmit(event)" class="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
-      <input type="text" id="chat-input" placeholder="輸入問題（例如：幫我看 NBIS）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-500" />
-      <button type="submit" class="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs transition">發送</button>
+      <input type="text" id="chat-input" placeholder="輸入問題（例如：幫我看 NBIS）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
+      <button type="submit" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition">發送</button>
     </form>
   </div>
 
@@ -530,7 +529,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-4">
         <div class="flex items-center gap-3">
-          <span class="px-3 py-1 bg-teal-500/10 border border-teal-500/30 text-teal-400 font-mono font-bold text-lg rounded-lg" id="modal-ticker-title">$TICKER</span>
+          <span class="px-3 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono font-bold text-lg rounded-lg" id="modal-ticker-title">$TICKER</span>
           <h3 class="text-lg font-bold text-white">AI 個股投資論點脈絡與歷史</h3>
         </div>
         <button onclick="closeDeepDiveModal()" class="text-slate-400 hover:text-white text-xl p-1 font-bold">✕</button>
@@ -543,7 +542,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
         <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
           <div class="text-slate-400">總提及次數 / AI 分析</div>
-          <div class="text-sm font-bold text-teal-400 mt-1" id="modal-mention-count">-</div>
+          <div class="text-sm font-bold text-amber-400 mt-1" id="modal-mention-count">-</div>
         </div>
         <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
           <div class="text-slate-400">當前最新立場</div>
@@ -553,7 +552,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       <div>
         <h4 class="text-sm font-bold text-slate-200 flex items-center gap-2 mb-3">
-          📌 3 個關鍵代表性觀點 (Key Milestones)
+          📌 關鍵代表性觀點 (Key Milestones)
         </h4>
         <div class="space-y-2.5" id="modal-key-points"></div>
       </div>
@@ -581,7 +580,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     let currentViewMode = 'all';
     let currentSentiment = 'ALL';
-    let currentTicker = initialTopTickers.length > 0 ? initialTopTickers[0][0] : '';
+    let currentTicker = '';
     let searchQuery = '';
     let currentSort = 'date_desc';
     let displayLimit = 25;
@@ -600,7 +599,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     function highlightText(text) {
       if (!text) return '';
       return text
-        .replace(/(\\$[A-Z]{1,5})/g, '<button onclick="filterByTicker(\\'$1\\'.replace(\\'$\\', \\'\\'))" class="font-bold text-teal-400 bg-teal-950/60 hover:bg-teal-900/80 px-1 py-0.5 rounded border border-teal-500/30 transition inline-block">$1</button>')
+        .replace(/(\\$[A-Za-z]{1,6})/g, '<button onclick="filterByTicker(\\'$1\\'.replace(\\'$\\', \\'\\').toUpperCase())" class="font-bold text-amber-400 bg-amber-950/60 hover:bg-amber-900/80 px-1 py-0.5 rounded border border-amber-500/30 transition inline-block">$1</button>')
         .replace(/(https?:\\/\\/[^\\s]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline break-all">$1</a>');
     }
 
@@ -609,7 +608,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.querySelectorAll('.view-btn').forEach(btn => {
         const active = btn.dataset.view === mode;
         btn.className = `view-btn px-2.5 sm:px-3 py-1 rounded-lg text-xs font-medium transition ${
-          active ? 'bg-teal-500 text-slate-950 font-bold shadow-sm' : 'text-slate-400 hover:text-white'
+          active ? 'bg-amber-500 text-slate-950 font-bold shadow-sm' : 'text-slate-400 hover:text-white'
         }`;
       });
       displayLimit = 25;
@@ -635,12 +634,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const viewTweets = getFilteredByView(allTweets);
       
       const counts = {};
-      viewTweets.forEach(t => {
+      const recencyScores = {};
+
+      viewTweets.forEach((t, index) => {
         t.tickers.forEach(sym => {
           counts[sym] = (counts[sym] || 0) + 1;
+          if (!recencyScores[sym]) {
+            recencyScores[sym] = Math.max(1, 100 - index);
+          }
         });
       });
-      const topTickers = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 35);
+
+      const topTickers = Object.keys(counts).sort((a, b) => {
+        const scoreA = (recencyScores[a] || 0) * 2 + (counts[a] || 0);
+        const scoreB = (recencyScores[b] || 0) * 2 + (counts[b] || 0);
+        return scoreB - scoreA;
+      }).slice(0, 40).map(sym => [sym, counts[sym]]);
 
       const total = viewTweets.length;
       const bullish = viewTweets.filter(t => t.sentiment === 'Bullish').length;
@@ -656,7 +665,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('stat-tickers').innerText = uniqueTickers.toLocaleString();
 
       renderTopTickers(topTickers);
-      if (currentTicker) renderStockQuote(currentTicker);
+      if (currentTicker) {
+        renderStockQuote(currentTicker);
+      } else {
+        document.getElementById('stock-quote-section').classList.add('hidden');
+      }
       render();
     }
 
@@ -674,7 +687,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           miniBadge = `<span class="text-[10px] ml-1 ${isPos ? 'text-emerald-400' : 'text-rose-400'}">${isPos ? '+' : ''}${quote.changePct.toFixed(1)}%</span>`;
         }
         return `
-          <button onclick="filterByTicker('${t}')" class="px-2.5 py-1 rounded-md text-xs font-mono font-medium border transition ${currentTicker === t ? 'bg-teal-500 text-slate-950 border-teal-400 font-bold' : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:border-teal-500/50'}">
+          <button onclick="filterByTicker('${t}')" class="px-2.5 py-1 rounded-md text-xs font-mono font-medium border transition ${currentTicker === t ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold' : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:border-amber-500/50'}">
             \\$${t} ${miniBadge} <span class="text-[10px] opacity-70">(${count})</span>
           </button>
         `;
@@ -775,7 +788,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('modal-ticker-title').innerText = `$${ticker}`;
       if (tickerTweets.length === 0) return;
 
-      const chronological = [...tickerTweets].sort((a, b) => a.date.localeCompare(b.date));
+      const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
       const firstMention = chronological[0];
       const latestMention = chronological[chronological.length - 1];
 
@@ -793,7 +806,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         keyContainer.innerHTML = keyPoints.map((item, idx) => `
           <div class="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800 space-y-1.5">
             <div class="flex items-center justify-between text-xs">
-              <span class="text-teal-400 font-bold font-mono">里程碑 #${idx + 1} (${item.date})</span>
+              <span class="text-amber-400 font-bold font-mono">里程碑 #${idx + 1} (${item.date})</span>
               <a href="${item.url}" target="_blank" class="text-slate-400 hover:text-white text-xs">原始推文 ↗</a>
             </div>
             <div class="text-sm font-semibold text-slate-100">${item.summary}</div>
@@ -837,7 +850,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     function filterByTicker(ticker) {
-      currentTicker = ticker;
+      currentTicker = ticker.toUpperCase();
       displayLimit = 25;
       document.getElementById('clear-ticker-btn').classList.toggle('hidden', !ticker);
       updateAggregatedView();
@@ -916,7 +929,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       } else if (currentSort === 'views_desc') {
         filtered.sort((a, b) => b.views - a.views);
       } else {
-        filtered.sort((a, b) => b.date.localeCompare(a.date));
+        filtered.sort((a, b) => (b.iso_date || b.date).localeCompare(a.iso_date || a.date));
       }
 
       const totalFiltered = filtered.length;
@@ -956,7 +969,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let contentHtml = '';
         if (item.summary || item.translation_zh) {
           contentHtml = `
-            ${item.summary ? `<div class="text-sm font-semibold text-teal-300 mb-1.5 flex items-start gap-1.5"><span class="text-teal-400 font-mono">⚡ 觀點：</span>${item.summary}</div>` : ''}
+            ${item.summary ? `<div class="text-sm font-semibold text-amber-300 mb-1.5 flex items-start gap-1.5"><span class="text-amber-400 font-mono">⚡ 觀點：</span>${item.summary}</div>` : ''}
             ${item.translation_zh ? `<div class="text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">${highlightText(item.translation_zh)}</div>` : ''}
             <details class="mt-2 text-xs text-slate-500">
               <summary class="cursor-pointer hover:text-slate-400 select-none">查看原文</summary>
@@ -967,7 +980,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           contentHtml = `
             <div id="trans-text-${globalIdx}" class="text-slate-200 text-sm leading-relaxed whitespace-pre-wrap font-medium mb-1 ${cachedClient ? '' : 'hidden'}">${cachedClient ? highlightText(cachedClient) : ''}</div>
             <div class="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">${highlightText(item.text)}</div>
-            ${cachedClient ? '' : `<button id="trans-btn-${globalIdx}" onclick="translateByIndex(${globalIdx})" class="text-xs text-teal-400 hover:text-teal-300 flex items-center gap-1 mt-2 transition">🌐 翻譯為繁體中文</button>`}
+            ${cachedClient ? '' : `<button id="trans-btn-${globalIdx}" onclick="translateByIndex(${globalIdx})" class="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 mt-2 transition">🌐 翻譯為繁體中文</button>`}
           `;
         }
 
@@ -977,7 +990,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <div class="flex items-center gap-2">
                 ${sentimentBadge}
                 <div class="flex flex-wrap gap-1">
-                  ${item.tickers.map(tk => `<button onclick="filterByTicker('${tk}')" class="text-xs font-mono font-bold text-teal-400 bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 transition">\\$${tk}</button>`).join('')}
+                  ${item.tickers.map(tk => `<button onclick="filterByTicker('${tk}')" class="text-xs font-mono font-bold text-amber-400 bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 transition">\\$${tk}</button>`).join('')}
                 </div>
               </div>
               <div class="text-xs text-slate-500 font-mono">${item.date}</div>
@@ -1012,9 +1025,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const isUser = sender === 'user';
       const msgDiv = document.createElement('div');
       msgDiv.className = isUser 
-        ? 'bg-teal-500/20 text-teal-200 border border-teal-500/30 p-2.5 rounded-xl ml-6'
+        ? 'bg-amber-500/20 text-amber-200 border border-amber-500/30 p-2.5 rounded-xl ml-6'
         : 'bg-slate-800/90 text-slate-200 border border-slate-700/80 p-3 rounded-xl mr-4 space-y-1.5';
-      msgDiv.innerHTML = isUser ? `<b>你：</b>${htmlContent}` : `<b>Burak 助理：</b><br>${htmlContent}`;
+      msgDiv.innerHTML = isUser ? `<b>你：</b>${htmlContent}` : `<b>Burak AI 助理：</b><br>${htmlContent}`;
       container.appendChild(msgDiv);
       container.scrollTop = container.scrollHeight;
     }
@@ -1039,7 +1052,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     function processChatIntent(query) {
       const q = query.toUpperCase();
       
-      // 1. 意圖：日報
       if (q.includes('日報') || q.includes('今日')) {
         setViewMode('daily');
         const viewTweets = getFilteredByView(allTweets);
@@ -1058,7 +1070,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 2. 意圖：偏多股票
       if (q.includes('偏多') || q.includes('看多') || q.includes('BULLISH')) {
         const counts = {};
         allTweets.forEach(t => {
@@ -1079,20 +1090,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         bullishList.forEach(([sym, data]) => {
           const qData = stockQuotes[sym];
           const priceStr = qData ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(1)}%)` : '';
-          resHtml += `• <button onclick="filterByTicker('${sym}')" class="text-teal-400 font-bold font-mono">\\$${sym}</button> ${priceStr}：${data.bullish} 則看多 (${Math.round(data.bullish/data.total*100)}%)<br>`;
+          resHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button> ${priceStr}：${data.bullish} 則看多 (${Math.round(data.bullish/data.total*100)}%)<br>`;
         });
         appendChatMessage('ai', resHtml);
         return;
       }
 
-      // 3. 意圖：特定個股論點/風險
-      const tickerMatch = q.match(/\\$?([A-Z]{1,5})/);
-      const symbol = tickerMatch ? tickerMatch[1] : null;
+      const tickerMatch = q.match(/\\$?([A-Za-z]{1,6})/);
+      const symbol = tickerMatch ? tickerMatch[1].toUpperCase() : null;
 
       if (symbol && stockQuotes[symbol]) {
         filterByTicker(symbol);
         const tickerTweets = allTweets.filter(t => t.tickers.includes(symbol));
-        const chronological = [...tickerTweets].sort((a, b) => a.date.localeCompare(b.date));
+        const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
         const first = chronological[0];
         const latest = chronological[chronological.length - 1];
         const qData = stockQuotes[symbol];
@@ -1118,14 +1128,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           • <b>最新立場：</b>${latest ? latest.sentiment : '中立'}<br>
           • <b>最新重點觀點：</b>${latest && latest.summary ? latest.summary : (latest ? latest.text.slice(0, 60) + '...' : '尚無摘要')}<br>
           <div class="mt-2">
-            <button onclick="openDeepDiveModal('${symbol}')" class="px-2 py-1 bg-teal-500 text-slate-950 font-bold rounded">開啟完整論點脈絡 ↗</button>
+            <button onclick="openDeepDiveModal('${symbol}')" class="px-2 py-1 bg-amber-500 text-slate-950 font-bold rounded">開啟完整論點脈絡 ↗</button>
           </div>
         `;
         appendChatMessage('ai', analysisHtml);
         return;
       }
 
-      // 4. 通用搜尋
       searchQuery = query.toLowerCase();
       document.getElementById('search-input').value = query;
       render();
@@ -1150,11 +1159,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-def generate_html(tweets, ticker_counts, stock_quotes):
+def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
     tweets_json_str = json.dumps(tweets, ensure_ascii=False)
-    ticker_counts_sorted = sorted(ticker_counts.items(), key=lambda x: x[1], reverse=True)[:35]
-    top_tickers_json_str = json.dumps(ticker_counts_sorted, ensure_ascii=False)
+    
+    # 近期新提及標的優先，其餘按頻率排序
+    ordered_tickers = []
+    for t in recent_tickers:
+        if t not in ordered_tickers:
+            ordered_tickers.append(t)
+            
+    for t, _ in sorted(ticker_counts.items(), key=lambda x: x[1], reverse=True):
+        if t not in ordered_tickers:
+            ordered_tickers.append(t)
+
+    top_tickers_sorted = [[t, ticker_counts.get(t, 0)] for t in ordered_tickers[:40]]
+    top_tickers_json_str = json.dumps(top_tickers_sorted, ensure_ascii=False)
     stock_quotes_json_str = json.dumps(stock_quotes, ensure_ascii=False)
 
     html_rendered = HTML_TEMPLATE.replace("__TWEETS_DATA__", tweets_json_str) \
@@ -1163,14 +1183,15 @@ def generate_html(tweets, ticker_counts, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ 儀表板成功產出至 {OUTPUT_HTML}", flush=True)
+    print(f"✅ Burak Finance 儀表板成功產出至 {OUTPUT_HTML} (已包含最新標的如 SPCX 與 NBIS)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
     sentiment_cache = load_cache(CACHE_FILE)
-    cleaned_tweets, counts = clean_tweet_data(tweets_raw, sentiment_cache)
+    cleaned_tweets, counts, recent_tickers = clean_tweet_data(tweets_raw, sentiment_cache)
     
-    top_tickers_list = [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:35]]
-    stock_quotes = fetch_stock_quotes(top_tickers_list)
+    # 合併近期提及標的與歷史熱門標的進行行情抓取
+    combined_target_list = list(dict.fromkeys(recent_tickers + [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:35]]))[:45]
+    stock_quotes = fetch_stock_quotes(combined_target_list)
     
-    generate_html(cleaned_tweets, counts, stock_quotes)
+    generate_html(cleaned_tweets, counts, recent_tickers, stock_quotes)
