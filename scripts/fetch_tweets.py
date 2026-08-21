@@ -1,15 +1,13 @@
-import base64
 import json
 import os
 import re
 import time
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 from datetime import datetime
 
 # ==========================================
-# 參數設定區 (Burak 與 Serenity 通用)
+# 參數設定區 (Burak: burak_finance / Serenity: aleabitoreddit)
 # ==========================================
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
@@ -17,15 +15,15 @@ TWEETS_FILE = "data/tweets.json"
 AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN", "").strip()
 CT0 = os.environ.get("TWITTER_CT0", "").strip()
 
-# Twitter 官方 Snowflake 起始紀元 (2010-11-04 01:42:54.657 UTC)
+# Twitter 官方 Snowflake 紀元起點 (2010-11-04 01:42:54.657 UTC)
 TWITTER_EPOCH = 1288834974657
 
 def log(message):
-    """即時輸出日誌至控制台"""
+    """即時強制輸出日誌至 GitHub Actions 控制台"""
     print(message, flush=True)
 
 def snowflake_to_iso(tweet_id_str):
-    """利用 Twitter Snowflake 演算法由推文 ID 還原毫秒級精確 UTC 發布時間"""
+    """利用 Twitter Snowflake 演算法由推文 ID 反推精確 UTC 發布時間"""
     try:
         t_id = int(str(tweet_id_str).strip())
         timestamp_ms = (t_id >> 22) + TWITTER_EPOCH
@@ -34,49 +32,10 @@ def snowflake_to_iso(tweet_id_str):
     except Exception:
         return None
 
-def decode_google_news_url(raw_url):
-    """【解碼器】將 Google RSS 的 CBMi... 加密連結逆向解析出真實 Twitter Status ID"""
-    if not raw_url:
-        return None
-
-    # 1. 若網址本身已包含 status/ID
-    m_direct = re.search(r'status/(\d{10,20})', raw_url)
-    if m_direct:
-        return m_direct.group(1).strip()
-
-    # 2. 解析 Google 加密特徵字串 articles/CBM...
-    m_token = re.search(r'articles/([A-Za-z0-9_-]+)', raw_url)
-    if not m_token:
-        return None
-
-    token = m_token.group(1)
-    # 補齊 Base64 padding
-    padding = len(token) % 4
-    if padding:
-        token += "=" * (4 - padding)
-
-    try:
-        decoded_bytes = base64.urlsafe_b64decode(token.encode("utf-8"))
-        decoded_str = decoded_bytes.decode("utf-8", errors="ignore")
-
-        # 從解碼字串中搜尋 status/ID
-        m_id = re.search(r'status/(\d{10,20})', decoded_str)
-        if m_id:
-            return m_id.group(1).strip()
-        
-        # 搜尋包含純數字推文 ID 的 URL 結構
-        m_url = re.search(r'https?://(?:x|twitter)\.com/[^/\s]+/status/(\d{10,20})', decoded_str)
-        if m_url:
-            return m_url.group(1).strip()
-    except Exception:
-        pass
-
-    return None
-
 def load_existing_tweets(filepath):
-    """讀取現有資料庫並自動修正所有時間戳記"""
+    """讀取本地現有推文資料庫並校正時間"""
     if not os.path.exists(filepath):
-        log("ℹ️ 本地 tweets.json 尚不存在，將建立新檔案。")
+        log("ℹ️ 本地 tweets.json 不存在，將建立新資料庫。")
         return []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -101,11 +60,9 @@ def load_existing_tweets(filepath):
         log(f"⚠️ 讀取現有推文失敗: {e}")
         return []
 
-def fetch_syndication_stream(screen_name):
-    """軌道 1：Twitter 官方認證即時串流"""
-    timestamp = int(time.time())
-    url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}?t={timestamp}"
-
+def fetch_syndication_page(screen_name, max_pages=3):
+    """透過 Twitter 官方 Syndication 串流多頁深度抓取最新與歷史推文"""
+    base_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -122,18 +79,26 @@ def fetch_syndication_stream(screen_name):
     else:
         log("⚠️ 未偵測到完整 Cookies，使用訪客模式連線。")
 
-    fetched_tweets = []
-    log(f"📡 [軌道 1] 正在連線 Twitter 官方串流抓取 @{screen_name} 最新發文...")
+    all_fetched = []
+    seen_ids = set()
 
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as response:
-            html = response.read().decode("utf-8")
+    for page in range(1, max_pages + 1):
+        timestamp = int(time.time()) + page
+        req_url = f"{base_url}?t={timestamp}&p={page}"
+        log(f"📡 正在連線官方串流抓取 @{screen_name} 推文 (批次 {page}/{max_pages})...")
 
-            match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
-            if match:
+        try:
+            req = urllib.request.Request(req_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                html = response.read().decode("utf-8")
+
+                match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
+                if not match:
+                    break
+
                 data = json.loads(match.group(1))
                 entries = data.get("props", {}).get("pageProps", {}).get("timeline", {}).get("entries", [])
+                page_count = 0
 
                 for entry in entries:
                     tweet_raw = entry.get("content", {}).get("tweet")
@@ -141,6 +106,10 @@ def fetch_syndication_stream(screen_name):
                         continue
 
                     tweet_id = str(tweet_raw.get("id_str") or tweet_raw.get("id", "")).strip()
+                    if not tweet_id or tweet_id in seen_ids:
+                        continue
+
+                    seen_ids.add(tweet_id)
                     text = tweet_raw.get("full_text") or tweet_raw.get("text", "")
                     created_at = snowflake_to_iso(tweet_id) or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -150,7 +119,7 @@ def fetch_syndication_stream(screen_name):
                     views = int(views_data.get("count", 0)) if isinstance(views_data, dict) and str(views_data.get("count", "")).isdigit() else 0
 
                     if tweet_id and text:
-                        fetched_tweets.append({
+                        all_fetched.append({
                             "id": tweet_id,
                             "text": text.strip(),
                             "created_at": created_at,
@@ -159,74 +128,21 @@ def fetch_syndication_stream(screen_name):
                             "views": views,
                             "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
                         })
+                        page_count += 1
 
-                log(f"  ✨ [軌道 1] 官方串流解析出 {len(fetched_tweets)} 則最新主推文！")
-    except Exception as e:
-        log(f"  ⚠️ [軌道 1 異常]: {e}")
+                log(f"  ✨ 批次 {page} 解析出 {page_count} 則推文！")
+                if page_count == 0:
+                    break
+                time.sleep(0.5)
 
-    return fetched_tweets
-
-def fetch_rss_decoded_history(screen_name):
-    """軌道 2：多關鍵字歷史索引回溯（結合 Base64 解碼引擎）"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-
-    log(f"🔍 [軌道 2] 啟動歷史深度檢索與 Base64 解碼模組...")
-    
-    # 檢索詞清單（涵蓋推文與作者帳號）
-    search_queries = [
-        f"site:x.com/{screen_name}",
-        f"site:twitter.com/{screen_name}",
-        f"twitter.com {screen_name}"
-    ]
-
-    history_tweets = []
-    seen_ids = set()
-
-    for q in search_queries:
-        feed_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(q)}&hl=en-US&gl=US&ceid=US:en"
-        try:
-            req = urllib.request.Request(feed_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                xml_data = resp.read()
-
-            root = ET.fromstring(xml_data)
-            items = root.findall("./channel/item")
-
-            for item in items:
-                link = item.findtext("link") or ""
-                title = item.findtext("title") or ""
-
-                # 執行 Base64 解碼提取真實 Status ID
-                t_id = decode_google_news_url(link)
-                if not t_id:
-                    t_id = decode_google_news_url(title)
-
-                if t_id and t_id not in seen_ids:
-                    seen_ids.add(t_id)
-                    clean_text = re.sub(r' - [^-]+$', '', title).strip()
-                    real_date = snowflake_to_iso(t_id)
-
-                    if clean_text and len(clean_text) > 5 and real_date:
-                        history_tweets.append({
-                            "id": t_id,
-                            "text": clean_text,
-                            "created_at": real_date,
-                            "favorite_count": 0,
-                            "retweet_count": 0,
-                            "views": 0,
-                            "url": f"https://twitter.com/{screen_name}/status/{t_id}"
-                        })
-            time.sleep(0.3)
         except Exception as e:
-            log(f"  ⚠️ 檢索詞 [{q}] 查詢異常: {e}")
+            log(f"  ⚠️ 批次 {page} 連線異常: {e}")
+            break
 
-    log(f"  ✨ [軌道 2] 成功解碼並挖掘出 {len(history_tweets)} 則具備真實 ID 的歷史推文！")
-    return history_tweets
+    return all_fetched
 
 def enrich_recent_metrics(tweets_list, max_count=25):
-    """【即時同步】為最新 25 則推文同步真實的按讚數、轉推數與完整內文"""
+    """為最新 25 則推文同步真實的按讚數、轉推數與完整內文"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
@@ -255,7 +171,6 @@ def enrich_recent_metrics(tweets_list, max_count=25):
                         tw["retweet_count"] = retweets
                         tw["views"] = views
 
-                        # 補全完整內文
                         if t_data.get("text") and len(t_data["text"]) > len(tw.get("text", "")):
                             tw["text"] = t_data["text"]
 
@@ -288,7 +203,6 @@ def save_merged_tweets(filepath, incoming_tweets):
             log(f"  ➕ 全新收錄推文 [{t_id}] ({t['created_at']}): {t['text'][:35]}...")
         else:
             old = tweets_map[t_id]
-            # 覆蓋更新互動數據與內文
             if t.get("favorite_count", 0) >= old.get("favorite_count", 0):
                 tweets_map[t_id]["favorite_count"] = t["favorite_count"]
             if t.get("retweet_count", 0) >= old.get("retweet_count", 0):
@@ -307,7 +221,7 @@ def save_merged_tweets(filepath, incoming_tweets):
         reverse=True
     )
 
-    # 針對前 25 則最新推文執行即時數據更新
+    # 同步前 25 則最新推文的互動數據
     merged_list = enrich_recent_metrics(merged_list, max_count=25)
 
     with open(filepath, "w", encoding="utf-8") as f:
@@ -322,18 +236,10 @@ def save_merged_tweets(filepath, incoming_tweets):
 
     if merged_list:
         latest = merged_list[0]
-        log(f"🔝 最新第 1 筆推文: {latest.get('created_at')} (ID: {latest.get('id')}) | ❤️ {latest.get('favorite_count', 0)}  🔁 {latest.get('retweet_count', 0)}  👁️ {latest.get('views', 0)}")
+        log(f"🔝 資料庫最新第 1 筆推文: {latest.get('created_at')} (ID: {latest.get('id')}) | ❤️ {latest.get('favorite_count', 0)}  🔁 {latest.get('retweet_count', 0)}  👁️ {latest.get('views', 0)}")
 
 if __name__ == "__main__":
-    log(f"🚀 開始執行 @{TARGET_HANDLE} 方案 C 雙軌歷史深度擷取任務...")
-
-    # 1. 抓取官方即時最新主推文
-    tweets_syndication = fetch_syndication_stream(TARGET_HANDLE)
-
-    # 2. 透過 Base64 解碼挖掘歷史推文
-    tweets_history = fetch_rss_decoded_history(TARGET_HANDLE)
-
-    # 3. 雙軌聚合、去重與寫入
-    all_incoming = tweets_syndication + tweets_history
-    save_merged_tweets(TWEETS_FILE, all_incoming)
+    log(f"🚀 開始執行 @{TARGET_HANDLE} 官方認證深度推文擷取任務...")
+    tweets = fetch_syndication_page(TARGET_HANDLE, max_pages=3)
+    save_merged_tweets(TWEETS_FILE, tweets)
     log("✅ 任務全部完成。")
