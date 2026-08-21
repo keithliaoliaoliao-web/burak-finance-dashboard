@@ -5,7 +5,9 @@ import time
 import urllib.request
 from datetime import datetime
 
-# 目標推特帳號：Burak Finance
+# ==========================================
+# 參數設定區 (Burak Finance 專案)
+# ==========================================
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
@@ -25,18 +27,18 @@ def robust_parse_date(raw_date):
     if not s or s.lower() in ("none", "null", "1970-01-01t00:00:00z", "1970-01-01 00:00", "未知時間"):
         return None
 
-    # 1. Twitter 官方標準格式: "Thu Aug 20 16:20:00 +0000 2026"
+    # 1. Twitter 官方標準格式: "Thu Aug 20 17:08:52 +0000 2026"
     try:
         dt = datetime.strptime(s, "%a %b %d %H:%M:%S %z %Y")
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         pass
 
-    # 2. 標準 ISO 格式: "2026-08-20T16:20:00Z"
+    # 2. 標準 ISO 格式: "2026-08-20T17:08:52Z"
     if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', s):
         return s[:19] + "Z"
 
-    # 3. 常見日期字串: "2026-08-20 16:20:00" 或 "2026-08-20 16:20"
+    # 3. 常見日期格式: "2026-08-20 17:08:52" 或 "2026-08-20 17:08"
     try:
         clean = s.replace("/", "-")
         if len(clean) >= 19:
@@ -82,7 +84,7 @@ def recover_tweet_date(item):
     return "1970-01-01T00:00:00Z"
 
 def clean_invalid_records(tweets):
-    """自動剔除無效假 ID 資料"""
+    """自動過濾無效假 ID 資料"""
     valid = []
     removed = 0
     for tw in tweets:
@@ -99,7 +101,7 @@ def clean_invalid_records(tweets):
 def load_existing_tweets(filepath):
     """讀取本地現有推文資料庫"""
     if not os.path.exists(filepath):
-        log("ℹ️ 本地 tweets.json 不存在，將建立新資料庫。")
+        log("ℹ️ 本地 tweets.json 尚不存在，將建立新資料庫。")
         return []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -122,8 +124,8 @@ def load_existing_tweets(filepath):
         log(f"⚠️ 讀取現有推文失敗: {e}")
         return []
 
-def fetch_syndication_stream(screen_name):
-    """軌道 1：官方 Syndication 串流（獲取原創主貼文）"""
+def fetch_tweets_syndication(screen_name):
+    """透過 Twitter 官方 Syndication 串流抓取最新推文"""
     timestamp = int(time.time())
     url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}?t={timestamp}"
     
@@ -141,10 +143,10 @@ def fetch_syndication_stream(screen_name):
         headers["x-csrf-token"] = CT0
         log("🔑 官方認證憑證 (Cookies) 注入成功。")
     else:
-        log("⚠️ 未偵測到完整 Cookies，使用公開訪客模式連線。")
+        log("⚠️ 未偵測到完整 Cookies，使用訪客模式發起請求。")
 
     fetched_tweets = []
-    log(f"📡 [軌道 1] 正在連線 Twitter 官方串流抓取 @{screen_name} 最新原創主推文...")
+    log(f"📡 正在連線 Twitter 官方串流抓取 @{screen_name} 最新發文...")
 
     try:
         req = urllib.request.Request(url, headers=headers)
@@ -153,7 +155,7 @@ def fetch_syndication_stream(screen_name):
 
             match = re.search(r'<script id="__NEXT_DATA__" type="application/json">([^<]+)</script>', html)
             if not match:
-                log("  ⚠️ 未能解析出結構化 JSON 區塊。")
+                log("⚠️ 未能解析出結構化 JSON 區塊。")
                 return []
 
             data = json.loads(match.group(1))
@@ -186,73 +188,58 @@ def fetch_syndication_stream(screen_name):
                         "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
                     })
 
-            log(f"  ✨ [軌道 1] 解析出 {len(fetched_tweets)} 則主推文！")
+            log(f"✨ 順利從官方串流解析出 {len(fetched_tweets)} 則推文！")
 
     except Exception as e:
-        log(f"  ⚠️ [軌道 1 異常]: {e}")
+        log(f"⚠️ 官方串流抓取異常: {e}")
 
     return fetched_tweets
 
-def fetch_fxtwitter_timeline(screen_name):
-    """軌道 2：FxTwitter 全動態串流（捕獲最新回覆串、即時發文與真實互動數）"""
+def enrich_recent_metrics(tweets_list, max_count=15):
+    """【即時補齊機制】對最新發布的推文查詢最新點讚、轉推與瀏覽量"""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
+    updated = 0
+    check_limit = min(len(tweets_list), max_count)
+    log(f"🔄 正在為最新 {check_limit} 則推文同步即時真實互動數據 (Likes/RT/Views)...")
 
-    fetched_tweets = []
-    log(f"🔍 [軌道 2] 正在連線全動態 API 檢索 @{screen_name} 最新發文與回覆串...")
+    for tw in tweets_list[:check_limit]:
+        t_id = str(tw.get("id", "")).strip()
+        if not t_id.isdigit() or len(t_id) < 10:
+            continue
 
-    # 檢索端點清單
-    endpoints = [
-        f"https://api.fxtwitter.com/{screen_name}",
-        f"https://api.fxtwitter.com/{screen_name}/latest"
-    ]
-
-    for ep in endpoints:
+        api_url = f"https://api.fxtwitter.com/status/{t_id}"
         try:
-            req = urllib.request.Request(ep, headers=headers)
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            req = urllib.request.Request(api_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=6) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
-                    raw_list = []
-                    if isinstance(data, dict):
-                        if isinstance(data.get("tweets"), list):
-                            raw_list = data["tweets"]
-                        elif isinstance(data.get("tweet"), dict):
-                            raw_list = [data["tweet"]]
-
-                    for item in raw_list:
-                        if not isinstance(item, dict):
-                            continue
-                        t_id = str(item.get("id") or item.get("id_str") or "").strip()
-                        text = item.get("text") or item.get("full_text") or ""
+                    t_data = data.get("tweet", {})
+                    if t_data:
+                        likes = int(t_data.get("likes", 0) or t_data.get("favorite_count", 0) or 0)
+                        retweets = int(t_data.get("retweets", 0) or t_data.get("retweet_count", 0) or 0)
+                        views = int(t_data.get("views", 0) or 0)
                         
-                        raw_time = item.get("created_at") or item.get("created_timestamp")
-                        created_at = robust_parse_date(raw_time) or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                        tw["favorite_count"] = likes
+                        tw["retweet_count"] = retweets
+                        tw["views"] = views
 
-                        likes = int(item.get("likes", 0) or item.get("favorite_count", 0) or 0)
-                        retweets = int(item.get("retweets", 0) or item.get("retweet_count", 0) or 0)
-                        views = int(item.get("views", 0) or 0)
+                        if t_data.get("created_at"):
+                            parsed_d = robust_parse_date(t_data.get("created_at"))
+                            if parsed_d:
+                                tw["created_at"] = parsed_d
+                        
+                        updated += 1
+            time.sleep(0.15)
+        except Exception:
+            continue
 
-                        if t_id and text and t_id.isdigit() and len(t_id) >= 10:
-                            fetched_tweets.append({
-                                "id": t_id,
-                                "text": text.strip(),
-                                "created_at": created_at,
-                                "favorite_count": likes,
-                                "retweet_count": retweets,
-                                "views": views,
-                                "url": f"https://twitter.com/{screen_name}/status/{t_id}"
-                            })
-        except Exception as e:
-            log(f"  ⚠️ [軌道 2 端點 {ep} 異常]: {e}")
-
-    log(f"  ✨ [軌道 2] 成功解析出 {len(fetched_tweets)} 則全動態真實推文！")
-    return fetched_tweets
+    log(f"✨ 成功同步 {updated} 則推文的真實即時數據！")
+    return tweets_list
 
 def save_merged_tweets(filepath, new_tweets):
-    """將雙軌新推文與現有資料庫合併去重，由新到舊嚴格排序儲存"""
+    """將新推文與現有資料庫合併去重，並嚴格按時間降序儲存"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -269,16 +256,9 @@ def save_merged_tweets(filepath, new_tweets):
         if t_id not in tweets_map:
             tweets_map[t_id] = t
             added_count += 1
-            log(f"  ➕ 新增推文 [{t_id}] ({t['created_at']}): {t['text'][:35]}...")
+            log(f"  ➕ 發現全新推文 [{t_id}] ({t['created_at']}): {t['text'][:35]}...")
         else:
-            # 既有推文同步最新點讚數與轉推數
-            old = tweets_map[t_id]
-            if t.get("favorite_count", 0) >= old.get("favorite_count", 0):
-                tweets_map[t_id]["favorite_count"] = t["favorite_count"]
-            if t.get("retweet_count", 0) >= old.get("retweet_count", 0):
-                tweets_map[t_id]["retweet_count"] = t["retweet_count"]
-            if t.get("views", 0) >= old.get("views", 0):
-                tweets_map[t_id]["views"] = t["views"]
+            tweets_map[t_id].update(t)
             updated_count += 1
 
     merged_list = list(tweets_map.values())
@@ -288,6 +268,9 @@ def save_merged_tweets(filepath, new_tweets):
         key=lambda x: str(x.get("created_at") or recover_tweet_date(x)), 
         reverse=True
     )
+
+    # 啟動最新推文即時數據同步
+    merged_list = enrich_recent_metrics(merged_list, max_count=15)
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(merged_list, f, ensure_ascii=False, indent=2)
@@ -304,15 +287,7 @@ def save_merged_tweets(filepath, new_tweets):
         log(f"🔝 最新第 1 筆推文: {latest.get('created_at')} (ID: {latest.get('id')}) | ❤️ {latest.get('favorite_count', 0)}  🔁 {latest.get('retweet_count', 0)}  👁️ {latest.get('views', 0)}")
 
 if __name__ == "__main__":
-    log(f"🚀 開始執行 @{TARGET_HANDLE} 雙軌推文擷取任務...")
-    
-    # 1. 抓取原創主推文
-    tweets_syndication = fetch_syndication_stream(TARGET_HANDLE)
-    
-    # 2. 抓取全動態即時推文與回覆串
-    tweets_dynamic = fetch_fxtwitter_timeline(TARGET_HANDLE)
-    
-    # 3. 雙軌聚合儲存
-    all_tweets = tweets_syndication + tweets_dynamic
-    save_merged_tweets(TWEETS_FILE, all_tweets)
+    log(f"🚀 開始執行 @{TARGET_HANDLE} 官方認證推文擷取任務...")
+    tweets = fetch_tweets_syndication(TARGET_HANDLE)
+    save_merged_tweets(TWEETS_FILE, tweets)
     log("✅ 任務全部完成。")
