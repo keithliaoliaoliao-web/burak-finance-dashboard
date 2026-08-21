@@ -7,12 +7,12 @@ import urllib.request
 from datetime import datetime
 
 # ==========================================
-# 參數設定區 (可自由調整)
+# 參數設定區 (Burak Finance 專案)
 # ==========================================
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
-# 歷史回填頁數：每次執行向下翻 10 頁（約可探索 150~200 則歷史推文）
+# 最大向下探索頁數（遇重複資料庫會自動提前停止，避免被 Twitter 限速）
 MAX_PAGES_TO_FETCH = 10
 
 AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN", "").strip()
@@ -125,8 +125,8 @@ def get_user_id_and_initial_tweets(screen_name):
 
     return user_id, tweets
 
-def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
-    """透過 Twitter 官方 GraphQL 端點執行游標分頁，深度向下挖掘歷史推文"""
+def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=10):
+    """透過 Twitter 官方 GraphQL 游標分頁深度挖掘（具備 Early-Stopping 遇重複早停機制）"""
     if not user_id or not AUTH_TOKEN or not CT0:
         log("⚠️ 未具備完整認證 Cookie 或 User ID，跳過 GraphQL 歷史回填。")
         return []
@@ -141,9 +141,7 @@ def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
         "Content-Type": "application/json"
     }
 
-    # 支援多組常見的 UserTweets GraphQL Query ID 以保證連線成功率
     query_ids = ["V7H0Ap3_Hh2FyS75OCDO3Q", "E3opETHurVaQhXMcGvZnpg", "Tg82Ez_40SwGTScOioip6Q", "Q6aDgCRGQW5Pn49WBeaxMw"]
-    
     features = {
         "responsive_web_graphql_timeline_navigation_enabled": True,
         "unified_cards_ad_metadata_container_dynamic_card_content_query_enabled": True,
@@ -154,7 +152,7 @@ def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
     cursor = None
     seen_ids = set()
 
-    log(f"🚀 [歷史挖掘啟動] 開始透過 GraphQL 分頁回溯 @{screen_name} 歷史推文 (預計向下翻 {max_pages} 頁)...")
+    log(f"🚀 [歷史探索啟動] 開始透過 GraphQL 分頁檢索 @{screen_name} (上限 {max_pages} 頁，遇既有資料自動提早結束)...")
 
     for page in range(1, max_pages + 1):
         variables = {
@@ -169,6 +167,9 @@ def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
             variables["cursor"] = cursor
 
         success = False
+        page_tweets = []
+        next_cursor = None
+
         for qid in query_ids:
             url = f"https://x.com/i/api/graphql/{qid}/UserTweets?variables={urllib.parse.quote(json.dumps(variables))}&features={urllib.parse.quote(json.dumps(features))}"
             try:
@@ -176,25 +177,16 @@ def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
                 with urllib.request.urlopen(req, timeout=12) as resp:
                     if resp.status == 200:
                         data = json.loads(resp.read().decode("utf-8"))
-                        
-                        # 解析 GraphQL 回傳結構
                         instructions = data.get("data", {}).get("user", {}).get("result", {}).get("timeline_v2", {}).get("timeline", {}).get("instructions", [])
                         if not instructions:
                             instructions = data.get("data", {}).get("user", {}).get("result", {}).get("timeline", {}).get("timeline", {}).get("instructions", [])
 
-                        page_tweets = 0
-                        next_cursor = None
-
                         for inst in instructions:
-                            entries = inst.get("entries", [])
-                            for entry in entries:
+                            for entry in inst.get("entries", []):
                                 entry_id = entry.get("entryId", "")
-                                
-                                # 捕捉向下翻頁游標
                                 if "cursor-bottom" in entry_id:
                                     next_cursor = entry.get("content", {}).get("value")
 
-                                # 捕捉推文內容
                                 tweet_result = entry.get("content", {}).get("itemContent", {}).get("tweet_results", {}).get("result", {})
                                 if not tweet_result:
                                     continue
@@ -205,7 +197,7 @@ def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
 
                                 t_id = str(legacy.get("id_str") or tweet_result.get("rest_id") or "").strip()
                                 text = legacy.get("full_text") or legacy.get("text", "")
-                                
+
                                 if t_id and text and t_id not in seen_ids:
                                     seen_ids.add(t_id)
                                     created_at = snowflake_to_iso(t_id) or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -213,7 +205,7 @@ def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
                                     rt_count = int(legacy.get("retweet_count", 0) or 0)
                                     views = int(tweet_result.get("views", {}).get("count", 0) or 0)
 
-                                    all_history.append({
+                                    page_tweets.append({
                                         "id": t_id,
                                         "text": text.strip(),
                                         "created_at": created_at,
@@ -222,22 +214,35 @@ def fetch_history_via_graphql(user_id, screen_name, max_pages=10):
                                         "views": views,
                                         "url": f"https://twitter.com/{screen_name}/status/{t_id}"
                                     })
-                                    page_tweets += 1
 
-                        log(f"  📜 [第 {page}/{max_pages} 頁] 成功挖掘出 {page_tweets} 則歷史推文！")
-                        cursor = next_cursor
                         success = True
                         break
             except Exception:
                 continue
 
-        if not success or not cursor:
-            log(f"  ℹ️ 已到達歷史推文底部或無法取得下一頁游標，於第 {page} 頁結束挖掘。")
+        if not success or not page_tweets:
+            log(f"  ℹ️ 已到達歷史推文邊界或未取得新資料，於第 {page} 頁結束挖掘。")
             break
 
-        time.sleep(1.2)  # 防限速保護間隔
+        all_history.extend(page_tweets)
+        
+        # 檢查本頁是否有全新推文（不在資料庫中）
+        new_in_page = [t for t in page_tweets if t["id"] not in existing_ids_set]
+        log(f"  📜 [第 {page}/{max_pages} 頁] 解析出 {len(page_tweets)} 則推文 (其中全新: {len(new_in_page)} 則)")
 
-    log(f"✨ GraphQL 歷史回溯累計挖掘出 {len(all_history)} 則歷史推文！")
+        # 【Early-Stopping 智慧保護】
+        # 若不是第 1 頁，且整頁推文全都是資料庫已收錄的舊推文，表示已接軌歷史庫，自動提早結束！
+        if page > 1 and len(new_in_page) == 0:
+            log("  🛑 [智慧早停] 本頁所有推文皆已存在於本地資料庫中，已成功接軌歷史紀錄，停止向下請求以節省資源！")
+            break
+
+        if not next_cursor or next_cursor == cursor:
+            break
+
+        cursor = next_cursor
+        time.sleep(1.0)  # 防限速保護間隔
+
+    log(f"✨ 歷史探索完成，累計取得 {len(all_history)} 則推文！")
     return all_history
 
 def enrich_recent_metrics(tweets_list, target_count=35):
@@ -282,7 +287,7 @@ def enrich_recent_metrics(tweets_list, target_count=35):
     return tweets_list
 
 def save_merged_tweets(filepath, incoming_tweets):
-    """將所有抓取到的新舊推文與現有資料庫合併去重，並由新到舊排序儲存"""
+    """將抓取到的推文與現有資料庫合併去重，並由新到舊排序儲存"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
@@ -299,6 +304,7 @@ def save_merged_tweets(filepath, incoming_tweets):
         if t_id not in tweets_map:
             tweets_map[t_id] = t
             added_count += 1
+            log(f"  ➕ 全新收錄推文 [{t_id}] ({t['created_at']}): {t['text'][:35]}...")
         else:
             old = tweets_map[t_id]
             if t.get("favorite_count", 0) >= old.get("favorite_count", 0):
@@ -313,7 +319,7 @@ def save_merged_tweets(filepath, incoming_tweets):
 
     merged_list = list(tweets_map.values())
 
-    # 依 Snowflake 精確時間由新到舊嚴格排序
+    # 依 Snowflake 精確時間降序排序（最新在最前）
     merged_list.sort(
         key=lambda x: str(x.get("created_at") or snowflake_to_iso(x.get("id")) or "1970-01-01T00:00:00Z"),
         reverse=True
@@ -341,16 +347,20 @@ def save_merged_tweets(filepath, incoming_tweets):
         log(f"🔚 最舊推文: {oldest.get('created_at')} (ID: {oldest.get('id')})")
 
 if __name__ == "__main__":
-    log(f"🚀 開始執行 @{TARGET_HANDLE} 歷史推文回填與即時同步任務...")
-    
-    # 1. 取得 User ID 與最新串流推文
+    log(f"🚀 開始執行 @{TARGET_HANDLE} 自適應推文擷取與同步任務...")
+
+    # 1. 讀取現有資料庫 ID 集合
+    existing_tweets = load_existing_tweets(TWEETS_FILE)
+    existing_ids = {str(t.get("id", "")).strip() for t in existing_tweets if t.get("id")}
+
+    # 2. 取得 User ID 與最新串流推文
     user_id, latest_tweets = get_user_id_and_initial_tweets(TARGET_HANDLE)
     log(f"🆔 成功取得 @{TARGET_HANDLE} 之 Twitter User ID: {user_id}")
 
-    # 2. 啟動 GraphQL 深度向下翻頁挖掘歷史貼文
-    history_tweets = fetch_history_via_graphql(user_id, TARGET_HANDLE, max_pages=MAX_PAGES_TO_FETCH)
+    # 3. 啟動 GraphQL 深度挖掘（支援遇重複早停機制）
+    history_tweets = fetch_history_via_graphql(user_id, TARGET_HANDLE, existing_ids, max_pages=MAX_PAGES_TO_FETCH)
 
-    # 3. 雙向聚合並存入資料庫
+    # 4. 合併並寫入資料庫
     all_incoming = latest_tweets + history_tweets
     save_merged_tweets(TWEETS_FILE, all_incoming)
     log("✅ 任務全部完成。")
