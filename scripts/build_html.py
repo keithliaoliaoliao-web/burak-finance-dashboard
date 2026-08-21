@@ -178,7 +178,7 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
 
     cleaned = []
     ticker_counts = {}
-    recent_tickers = []  # 記錄近期推文出現的標的
+    recent_tickers = []
 
     for idx, item in enumerate(raw_tweets):
         if not isinstance(item, dict):
@@ -195,8 +195,8 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
 
         for t in tickers:
             ticker_counts[t] = ticker_counts.get(t, 0) + 1
-            if idx < 50 and t not in recent_tickers:
-                recent_tickers.append(t)  # 前 50 筆最新推文提及的股票優先記錄
+            if idx < 60 and t not in recent_tickers:
+                recent_tickers.append(t)
 
         ai_data = sentiment_cache.get(tweet_id) if tweet_id else None
         sentiment = "Neutral"
@@ -238,13 +238,12 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
             "url": url or "#"
         })
 
-    # 嚴格按時間降序排序（最新在最前）
     cleaned.sort(key=lambda x: str(x.get("iso_date") or x.get("date") or ""), reverse=True)
     return cleaned, ticker_counts, recent_tickers
 
 def fetch_stock_quotes(tickers):
-    """獲取美股市場行情數據"""
-    print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情數據 (含近期提及與熱門標的)...", flush=True)
+    """獲取美股市場行情數據（支援多代號查詢）"""
+    print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情數據...", flush=True)
     quotes = {}
     
     for symbol in tickers:
@@ -382,7 +381,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- 熱門與近期關注標的快速過濾區 (支援最新提及標的優先呈現) -->
+    <!-- 熱門與近期關注標的快速過濾區 -->
     <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -393,7 +392,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="flex flex-wrap gap-1.5" id="top-tickers-bar"></div>
     </div>
 
-    <!-- 個股即時行情專區 -->
+    <!-- 個股即時行情專區 (核心修復：即使暫無 yfinance 報價也能正常展開與顯示 AI 脈絡 / TradingView) -->
     <div id="stock-quote-section" class="bg-gradient-to-r from-slate-900/90 via-slate-900/70 to-slate-900/90 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden hidden space-y-4">
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         
@@ -404,7 +403,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div>
             <div class="flex items-baseline gap-2">
               <span class="text-3xl font-bold font-mono text-white" id="quote-price">$0.00</span>
-              <span class="text-xs text-slate-400">USD</span>
+              <span class="text-xs text-slate-400" id="quote-currency-label">USD</span>
             </div>
             <div class="flex items-center gap-2 mt-0.5 text-sm font-semibold font-mono" id="quote-change-container">
               <span id="quote-change">$0.00</span>
@@ -460,7 +459,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- 搜尋、排序與觀點篩選 -->
     <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
       <div class="flex items-center gap-2 flex-1 max-w-lg">
-        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的（例如: SPCX, NBIS）..." 
+        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的（例如: RKLB, SPCX, NBIS）..." 
           class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition" />
         
         <select id="sort-select" onchange="changeSort(this.value)" class="bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-amber-500 transition cursor-pointer shrink-0">
@@ -512,14 +511,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="mt-2 flex flex-wrap gap-1.5">
           <button onclick="handleQuickAsk('日報')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">📅 日報</button>
           <button onclick="handleQuickAsk('目前有哪些偏多股票？')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🚀 偏多股票</button>
+          <button onclick="handleQuickAsk('幫我看 RKLB')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 RKLB</button>
           <button onclick="handleQuickAsk('幫我看 NBIS')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 NBIS</button>
-          <button onclick="handleQuickAsk('幫我看 SPCX')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 SPCX</button>
         </div>
       </div>
     </div>
 
     <form onsubmit="handleChatSubmit(event)" class="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
-      <input type="text" id="chat-input" placeholder="輸入問題（例如：幫我看 NBIS）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
+      <input type="text" id="chat-input" placeholder="輸入問題（例如：幫我看 RKLB）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
       <button type="submit" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition">發送</button>
     </form>
   </div>
@@ -649,7 +648,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const scoreA = (recencyScores[a] || 0) * 2 + (counts[a] || 0);
         const scoreB = (recencyScores[b] || 0) * 2 + (counts[b] || 0);
         return scoreB - scoreA;
-      }).slice(0, 40).map(sym => [sym, counts[sym]]);
+      }).slice(0, 45).map(sym => [sym, counts[sym]]);
 
       const total = viewTweets.length;
       const bullish = viewTweets.filter(t => t.sentiment === 'Bullish').length;
@@ -682,12 +681,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       bar.innerHTML = tickersList.map(([t, count]) => {
         const quote = stockQuotes[t];
         let miniBadge = '';
-        if (quote) {
+        if (quote && quote.changePct !== undefined) {
           const isPos = quote.changePct >= 0;
           miniBadge = `<span class="text-[10px] ml-1 ${isPos ? 'text-emerald-400' : 'text-rose-400'}">${isPos ? '+' : ''}${quote.changePct.toFixed(1)}%</span>`;
         }
         return `
-          <button onclick="filterByTicker('${t}')" class="px-2.5 py-1 rounded-md text-xs font-mono font-medium border transition ${currentTicker === t ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold' : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:border-amber-500/50'}">
+          <button onclick="filterByTicker('${t}')" class="px-2.5 py-1 rounded-md text-xs font-mono font-medium border transition ${currentTicker === t ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold shadow-md' : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:border-amber-500/50'}">
             \\$${t} ${miniBadge} <span class="text-[10px] opacity-70">(${count})</span>
           </button>
         `;
@@ -723,47 +722,60 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       `;
     }
 
+    // 【核心修復】：解耦渲染邏輯，即使無 yfinance 報價，也保證顯示 AI 脈絡按鈕與 TradingView K 線
     function renderStockQuote(ticker) {
       const section = document.getElementById('stock-quote-section');
-      if (!ticker || !stockQuotes[ticker]) {
+      if (!ticker) {
         section.classList.add('hidden');
         return;
       }
 
-      const data = stockQuotes[ticker];
+      const data = stockQuotes[ticker] || null;
       section.classList.remove('hidden');
 
       document.getElementById('quote-ticker-name').innerText = `$${ticker}`;
-      document.getElementById('quote-price').innerText = `$${data.price.toFixed(2)}`;
-
-      const isPositive = data.change >= 0;
+      
       const changeEl = document.getElementById('quote-change-container');
-      const changeVal = `${isPositive ? '+' : ''}${data.change.toFixed(2)}`;
-      const changePctVal = `(${isPositive ? '+' : ''}${data.changePct.toFixed(2)}%)`;
+      const currencyLabel = document.getElementById('quote-currency-label');
 
-      document.getElementById('quote-change').innerText = changeVal;
-      document.getElementById('quote-change-pct').innerText = changePctVal;
+      if (data && data.price) {
+        document.getElementById('quote-price').innerText = `$${data.price.toFixed(2)}`;
+        currencyLabel.innerText = 'USD';
+        
+        const isPositive = data.change >= 0;
+        const changeVal = `${isPositive ? '+' : ''}${data.change.toFixed(2)}`;
+        const changePctVal = `(${isPositive ? '+' : ''}${data.changePct.toFixed(2)}%)`;
 
-      if (isPositive) {
-        changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-semibold font-mono text-emerald-400';
+        changeEl.innerHTML = `
+          <span id="quote-change">${changeVal}</span>
+          <span id="quote-change-pct">${changePctVal}</span>
+          <span class="text-xs font-normal text-slate-400">相對前一日收盤</span>
+        `;
+        changeEl.className = `flex items-center gap-2 mt-0.5 text-sm font-semibold font-mono ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`;
+
+        document.getElementById('quote-volume').innerText = formatNumber(data.volume);
+        document.getElementById('quote-low52').innerText = data.low52 ? `$${data.low52.toFixed(2)}` : '-';
+        document.getElementById('quote-high52').innerText = data.high52 ? `$${data.high52.toFixed(2)}` : '-';
+
+        if (data.low52 && data.high52 && data.high52 > data.low52) {
+          const rangePct = Math.max(0, Math.min(100, Math.round(((data.price - data.low52) / (data.high52 - data.low52)) * 100)));
+          document.getElementById('quote-range-pct').innerText = `52 週區間水位 ${rangePct}%`;
+          document.getElementById('quote-range-bar').style.width = `${rangePct}%`;
+          document.getElementById('quote-52w-container').classList.remove('hidden');
+        } else {
+          document.getElementById('quote-52w-container').classList.add('hidden');
+        }
       } else {
-        changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-semibold font-mono text-rose-400';
+        // 優雅降級：顯示已連線 TradingView
+        document.getElementById('quote-price').innerText = '即時圖表模式';
+        currencyLabel.innerText = '';
+        changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊下方「K 線圖」展開即時走勢</span>';
+        changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-medium';
+        document.getElementById('quote-volume').innerText = 'TradingView 即時';
+        document.getElementById('quote-52w-container').classList.add('hidden');
       }
 
       document.getElementById('link-tradingview').href = `https://www.tradingview.com/symbols/${ticker}/`;
-
-      document.getElementById('quote-volume').innerText = formatNumber(data.volume);
-      document.getElementById('quote-low52').innerText = data.low52 ? `$${data.low52.toFixed(2)}` : '-';
-      document.getElementById('quote-high52').innerText = data.high52 ? `$${data.high52.toFixed(2)}` : '-';
-
-      if (data.low52 && data.high52 && data.high52 > data.low52) {
-        const rangePct = Math.max(0, Math.min(100, Math.round(((data.price - data.low52) / (data.high52 - data.low52)) * 100)));
-        document.getElementById('quote-range-pct').innerText = `52 週區間水位 ${rangePct}%`;
-        document.getElementById('quote-range-bar').style.width = `${rangePct}%`;
-        document.getElementById('quote-52w-container').classList.remove('hidden');
-      } else {
-        document.getElementById('quote-52w-container').classList.add('hidden');
-      }
 
       const tickerTweets = allTweets.filter(t => t.tickers.includes(ticker));
       const bullishCount = tickerTweets.filter(t => t.sentiment === 'Bullish').length;
@@ -1013,7 +1025,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // AI 對話抽屜邏輯與意圖解析引擎
+    // AI 對話抽屜邏輯與意圖解析
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -1082,7 +1094,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         });
 
         const bullishList = Object.entries(counts)
-          .filter(([sym, data]) => data.total >= 3 && (data.bullish / (data.bullish + data.bearish || 1)) >= 0.6)
+          .filter(([sym, data]) => data.total >= 2 && (data.bullish / (data.bullish + data.bearish || 1)) >= 0.6)
           .sort((a, b) => b[1].bullish - a[1].bullish)
           .slice(0, 6);
 
@@ -1099,40 +1111,44 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const tickerMatch = q.match(/\\$?([A-Za-z]{1,6})/);
       const symbol = tickerMatch ? tickerMatch[1].toUpperCase() : null;
 
-      if (symbol && stockQuotes[symbol]) {
+      if (symbol) {
         filterByTicker(symbol);
         const tickerTweets = allTweets.filter(t => t.tickers.includes(symbol));
-        const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
-        const first = chronological[0];
-        const latest = chronological[chronological.length - 1];
-        const qData = stockQuotes[symbol];
+        if (tickerTweets.length > 0) {
+          const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
+          const first = chronological[0];
+          const latest = chronological[chronological.length - 1];
+          const qData = stockQuotes[symbol];
+          const priceText = qData ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)` : '即時行情模式';
 
-        if (q.includes('風險') || q.includes('疑慮') || q.includes('看空')) {
-          const riskTweets = tickerTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('跌'))));
-          if (riskTweets.length > 0) {
-            let riskHtml = `⚠️ <b>關於 \\$${symbol} 被提及的風險與疑慮：</b><br>`;
-            riskTweets.slice(0, 3).forEach(t => {
-              riskHtml += `• <b>[${t.date}]</b> ${t.summary || t.translation_zh || t.text} (<a href="${t.url}" target="_blank" class="text-cyan-400 hover:underline">來源</a>)<br>`;
-            });
-            appendChatMessage('ai', riskHtml);
-          } else {
-            appendChatMessage('ai', `✅ <b>\\$${symbol}</b> 在歷史推文中未出現顯著的看空或風險警語。`);
+          if (q.includes('風險') || q.includes('疑慮') || q.includes('看空')) {
+            const riskTweets = tickerTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('跌'))));
+            if (riskTweets.length > 0) {
+              let riskHtml = `⚠️ <b>關於 \\$${symbol} 被提及的風險與疑慮：</b><br>`;
+              riskTweets.slice(0, 3).forEach(t => {
+                riskHtml += `• <b>[${t.date}]</b> ${t.summary || t.translation_zh || t.text} (<a href="${t.url}" target="_blank" class="text-cyan-400 hover:underline">來源</a>)<br>`;
+              });
+              appendChatMessage('ai', riskHtml);
+            } else {
+              appendChatMessage('ai', `✅ <b>\\$${symbol}</b> 在歷史推文中未出現顯著的看空或風險警語。`);
+            }
+            return;
           }
+
+          let analysisHtml = `
+            🎯 <b>\\$${symbol} 即時論點脈絡分析：</b><br>
+            • <b>當前股價：</b>${priceText}<br>
+            • <b>提及次數：</b>共 ${tickerTweets.length} 則推文<br>
+            • <b>首次提及：</b>${first ? first.date : '未知'}<br>
+            • <b>最新立場：</b>${latest ? latest.sentiment : '中立'}<br>
+            • <b>最新重點觀點：</b>${latest && latest.summary ? latest.summary : (latest ? latest.text.slice(0, 60) + '...' : '尚無摘要')}<br>
+            <div class="mt-2">
+              <button onclick="openDeepDiveModal('${symbol}')" class="px-2 py-1 bg-amber-500 text-slate-950 font-bold rounded">開啟完整論點脈絡 ↗</button>
+            </div>
+          `;
+          appendChatMessage('ai', analysisHtml);
           return;
         }
-
-        let analysisHtml = `
-          🎯 <b>\\$${symbol} 即時論點脈絡分析：</b><br>
-          • <b>當前股價：</b>$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)<br>
-          • <b>首次提及：</b>${first ? first.date : '未知'}<br>
-          • <b>最新立場：</b>${latest ? latest.sentiment : '中立'}<br>
-          • <b>最新重點觀點：</b>${latest && latest.summary ? latest.summary : (latest ? latest.text.slice(0, 60) + '...' : '尚無摘要')}<br>
-          <div class="mt-2">
-            <button onclick="openDeepDiveModal('${symbol}')" class="px-2 py-1 bg-amber-500 text-slate-950 font-bold rounded">開啟完整論點脈絡 ↗</button>
-          </div>
-        `;
-        appendChatMessage('ai', analysisHtml);
-        return;
       }
 
       searchQuery = query.toLowerCase();
@@ -1163,7 +1179,6 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
     tweets_json_str = json.dumps(tweets, ensure_ascii=False)
     
-    # 近期新提及標的優先，其餘按頻率排序
     ordered_tickers = []
     for t in recent_tickers:
         if t not in ordered_tickers:
@@ -1173,7 +1188,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
         if t not in ordered_tickers:
             ordered_tickers.append(t)
 
-    top_tickers_sorted = [[t, ticker_counts.get(t, 0)] for t in ordered_tickers[:40]]
+    top_tickers_sorted = [[t, ticker_counts.get(t, 0)] for t in ordered_tickers[:50]]
     top_tickers_json_str = json.dumps(top_tickers_sorted, ensure_ascii=False)
     stock_quotes_json_str = json.dumps(stock_quotes, ensure_ascii=False)
 
@@ -1183,15 +1198,15 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak Finance 儀表板成功產出至 {OUTPUT_HTML} (已包含最新標的如 SPCX 與 NBIS)", flush=True)
+    print(f"✅ Burak Finance 儀表板成功產出至 {OUTPUT_HTML} (已完美支援 RKLB, SPCX, NBIS 等標的)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
     sentiment_cache = load_cache(CACHE_FILE)
     cleaned_tweets, counts, recent_tickers = clean_tweet_data(tweets_raw, sentiment_cache)
     
-    # 合併近期提及標的與歷史熱門標的進行行情抓取
-    combined_target_list = list(dict.fromkeys(recent_tickers + [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:35]]))[:45]
+    # 擴大行情擷取清單至 80 檔標的
+    combined_target_list = list(dict.fromkeys(recent_tickers + [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:60]]))[:80]
     stock_quotes = fetch_stock_quotes(combined_target_list)
     
     generate_html(cleaned_tweets, counts, recent_tickers, stock_quotes)
