@@ -14,6 +14,7 @@ OUTPUT_HTML = "docs/index.html"
 
 TWITTER_EPOCH = 1288834974657
 
+# 美股 9 大核心產業板塊對應字典
 SECTOR_MAPPING = {
     "生技與醫療製藥": [
         "HIMS", "MRNA", "JNJ", "TEM", "LLY", "NVO", "ISRG", "CRSP", "VRTX", "AMGN", 
@@ -1449,7 +1450,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       if (q.includes('日報') || q.includes('今日')) {
         setViewMode('daily');
         const viewTweets = getFilteredByView(allTweets);
-        const bullish = viewTweets.filter(t => t.sentiment === 'Bullish').length;
+        const bullish = viewTweets.filter(t => t && t.sentiment === 'Bullish').length;
         const total = viewTweets.length;
         const counts = {};
         viewTweets.forEach(t => (t.tickers || []).forEach(sym => counts[sym] = (counts[sym] || 0) + 1));
@@ -1597,7 +1598,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (防禦性架構已全面注入)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (全標的智慧板塊分類已就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
