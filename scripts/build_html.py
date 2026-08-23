@@ -7,7 +7,7 @@ import yfinance as yf
 # ==========================================
 # 參數設定區 (Burak Finance 專屬)
 # ==========================================
-TARGET_HANDLE = "burak_finance"
+TARGET_HANDLE = os.environ.get("TARGET_HANDLE", "burak_finance")
 TWEETS_FILE = "data/tweets.json"
 CACHE_FILE = "data/sentiment_cache.json"
 OUTPUT_HTML = "docs/index.html"
@@ -94,6 +94,7 @@ def snowflake_to_iso(tweet_id_str):
 
 def load_tweets(filepath):
     if not os.path.exists(filepath):
+        print(f"⚠️ 找不到推文檔案: {filepath}", flush=True)
         return []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -129,7 +130,7 @@ def load_cache(filepath):
             return {}
     except Exception as e:
         print(f"⚠️ 讀取快取檔案失敗 ({filepath}): {e}", flush=True)
-        return []
+        return {}
 
 def extract_tickers(text):
     if not text:
@@ -401,7 +402,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white">
 
-  <!-- 頂部導航 (Burak 亮橘金品牌設計) -->
+  <!-- 頂部導航 -->
   <header class="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -657,7 +658,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 浮動 AI 對話助理按鈕與對話面板 (Burak 橘金設計) -->
+  <!-- 浮動 AI 對話助理按鈕與對話面板 -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -741,6 +742,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
 
   <script>
+    // 安全注入全域資料 (具備空值與標籤防禦)
     const allTweets = __TWEETS_DATA__ || [];
     const initialTopTickers = __TOP_TICKERS__ || [];
     const stockQuotes = __STOCK_QUOTES__ || {};
@@ -764,6 +766,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       watchlist = JSON.parse(localStorage.getItem('burak_watchlist') || '[]');
       clientTranslations = JSON.parse(localStorage.getItem('burak_trans_cache') || '{}');
     } catch(e) {}
+
+    // 安全設定 DOM 文字
+    function setSafeText(id, text) {
+      const el = document.getElementById(id);
+      if (el) el.innerText = text;
+    }
 
     function formatNumber(num) {
       if (!num && num !== 0) return '-';
@@ -863,57 +871,65 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function updateAggregatedView() {
-      const viewTweets = getFilteredByView(allTweets);
-      
-      const counts = {};
-      const recencyScores = {};
+      try {
+        const viewTweets = getFilteredByView(allTweets);
+        
+        const counts = {};
+        const recencyScores = {};
 
-      viewTweets.forEach((t, index) => {
-        if (!t) return;
-        (t.tickers || []).forEach(sym => {
-          counts[sym] = (counts[sym] || 0) + 1;
-          if (!recencyScores[sym]) {
-            recencyScores[sym] = Math.max(1, 100 - index);
-          }
+        viewTweets.forEach((t, index) => {
+          if (!t) return;
+          (t.tickers || []).forEach(sym => {
+            counts[sym] = (counts[sym] || 0) + 1;
+            if (!recencyScores[sym]) {
+              recencyScores[sym] = Math.max(1, 100 - index);
+            }
+          });
         });
-      });
 
-      const topTickers = Object.keys(counts)
-        .filter(isTickerInCurrentSector)
-        .sort((a, b) => {
-          const aStar = isWatchlisted(a) ? 10000 : 0;
-          const bStar = isWatchlisted(b) ? 10000 : 0;
-          const scoreA = aStar + (recencyScores[a] || 0) * 2 + (counts[a] || 0);
-          const scoreB = bStar + (recencyScores[b] || 0) * 2 + (counts[b] || 0);
-          return scoreB - scoreA;
-        })
-        .slice(0, 50)
-        .map(sym => [sym, counts[sym]]);
+        const topTickers = Object.keys(counts)
+          .filter(isTickerInCurrentSector)
+          .sort((a, b) => {
+            const aStar = isWatchlisted(a) ? 10000 : 0;
+            const bStar = isWatchlisted(b) ? 10000 : 0;
+            const scoreA = aStar + (recencyScores[a] || 0) * 2 + (counts[a] || 0);
+            const scoreB = bStar + (recencyScores[b] || 0) * 2 + (counts[b] || 0);
+            return scoreB - scoreA;
+          })
+          .slice(0, 50)
+          .map(sym => [sym, counts[sym]]);
 
-      const total = viewTweets.length;
-      const bullish = viewTweets.filter(t => t && t.sentiment === 'Bullish').length;
-      const bearish = viewTweets.filter(t => t && t.sentiment === 'Bearish').length;
-      const analyzed = viewTweets.filter(t => t && t.is_analyzed).length;
-      const uniqueTickers = topTickers.length;
-      const coveragePct = total ? Math.round((analyzed / total) * 100) : 0;
+        const total = viewTweets.length;
+        const bullish = viewTweets.filter(t => t && t.sentiment === 'Bullish').length;
+        const bearish = viewTweets.filter(t => t && t.sentiment === 'Bearish').length;
+        const analyzed = viewTweets.filter(t => t && t.is_analyzed).length;
+        const uniqueTickers = topTickers.length;
+        const coveragePct = total ? Math.round((analyzed / total) * 100) : 0;
 
-      document.getElementById('stat-total').innerText = total.toLocaleString();
-      document.getElementById('stat-ai-coverage').innerText = `AI 分析：${analyzed.toLocaleString()} / ${total.toLocaleString()} (${coveragePct}%)`;
-      document.getElementById('stat-bullish').innerText = `${bullish} (${total ? Math.round(bullish/total*100) : 0}%)`;
-      document.getElementById('stat-bearish').innerText = `${bearish} (${total ? Math.round(bearish/total*100) : 0}%)`;
-      document.getElementById('stat-tickers').innerText = uniqueTickers.toLocaleString();
+        setSafeText('stat-total', total.toLocaleString());
+        setSafeText('stat-ai-coverage', `AI 分析：${analyzed.toLocaleString()} / ${total.toLocaleString()} (${coveragePct}%)`);
+        setSafeText('stat-bullish', `${bullish} (${total ? Math.round(bullish/total*100) : 0}%)`);
+        setSafeText('stat-bearish', `${bearish} (${total ? Math.round(bearish/total*100) : 0}%)`);
+        setSafeText('stat-tickers', uniqueTickers.toLocaleString());
 
-      renderTopTickers(topTickers);
-      if (currentTicker) {
-        renderStockQuote(currentTicker);
-      } else {
-        document.getElementById('stock-quote-section').classList.add('hidden');
+        renderTopTickers(topTickers);
+        
+        const quoteSection = document.getElementById('stock-quote-section');
+        if (currentTicker) {
+          renderStockQuote(currentTicker);
+        } else if (quoteSection) {
+          quoteSection.classList.add('hidden');
+        }
+        
+        render();
+      } catch(err) {
+        console.error("更新視圖異常:", err);
       }
-      render();
     }
 
     function renderTopTickers(tickersList) {
       const bar = document.getElementById('top-tickers-bar');
+      if (!bar) return;
       if (!tickersList || tickersList.length === 0) {
         bar.innerHTML = '<span class="text-xs text-slate-500">該板塊下無符合的推文標的</span>';
         return;
@@ -944,17 +960,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const wrapper = document.getElementById('sentiment-chart-wrapper');
       const btnText = document.getElementById('sentiment-chart-btn-text');
       if (sentimentChartVisible) {
-        wrapper.classList.remove('hidden');
-        btnText.innerText = '收合趨勢';
+        if (wrapper) wrapper.classList.remove('hidden');
+        if (btnText) btnText.innerText = '收合趨勢';
         renderSentimentChart(currentTicker);
       } else {
-        wrapper.classList.add('hidden');
-        btnText.innerText = '情緒趨勢';
+        if (wrapper) wrapper.classList.add('hidden');
+        if (btnText) btnText.innerText = '情緒趨勢';
       }
     }
 
     function renderSentimentChart(ticker) {
-      if (!ticker) return;
+      if (!ticker || typeof Chart === 'undefined') return;
       const tickerTweets = allTweets.filter(t => t && (t.tickers || []).includes(ticker) && t.month && t.month !== '未知月份');
       
       const monthsMap = {};
@@ -968,7 +984,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const bullishData = sortedMonths.map(m => monthsMap[m].bullish);
       const bearishData = sortedMonths.map(m => monthsMap[m].bearish);
 
-      const ctx = document.getElementById('sentimentChartCanvas').getContext('2d');
+      const canvas = document.getElementById('sentimentChartCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
       if (sentimentChartInstance) sentimentChartInstance.destroy();
 
       sentimentChartInstance = new Chart(ctx, {
@@ -1009,12 +1027,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const wrapper = document.getElementById('tv-chart-wrapper');
       const btnText = document.getElementById('tv-chart-btn-text');
       if (tvChartVisible) {
-        wrapper.classList.remove('hidden');
-        btnText.innerText = '收合 K 線';
+        if (wrapper) wrapper.classList.remove('hidden');
+        if (btnText) btnText.innerText = '收合 K 線';
         loadTradingViewWidget(currentTicker);
       } else {
-        wrapper.classList.add('hidden');
-        btnText.innerText = 'K 線圖';
+        if (wrapper) wrapper.classList.add('hidden');
+        if (btnText) btnText.innerText = 'K 線圖';
       }
     }
 
@@ -1035,70 +1053,75 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function renderStockQuote(ticker) {
       const section = document.getElementById('stock-quote-section');
-      if (!ticker) {
-        section.classList.add('hidden');
-        return;
-      }
+      if (!ticker || !section) return;
 
       const data = stockQuotes[ticker] || null;
       section.classList.remove('hidden');
 
-      document.getElementById('quote-ticker-name').innerText = `$${ticker}`;
+      setSafeText('quote-ticker-name', `$${ticker}`);
       const starBtn = document.getElementById('quote-star-btn');
-      starBtn.innerText = isWatchlisted(ticker) ? '★' : '☆';
-      starBtn.className = isWatchlisted(ticker) ? 'text-xl text-amber-400 font-bold' : 'text-xl text-slate-500 hover:text-amber-400';
+      if (starBtn) {
+        starBtn.innerText = isWatchlisted(ticker) ? '★' : '☆';
+        starBtn.className = isWatchlisted(ticker) ? 'text-xl text-amber-400 font-bold' : 'text-xl text-slate-500 hover:text-amber-400';
+      }
       
       const changeEl = document.getElementById('quote-change-container');
-      const currencyLabel = document.getElementById('quote-currency-label');
 
       if (data && data.price) {
-        document.getElementById('quote-price').innerText = `$${data.price.toFixed(2)}`;
-        currencyLabel.innerText = 'USD';
+        setSafeText('quote-price', `$${data.price.toFixed(2)}`);
+        setSafeText('quote-currency-label', 'USD');
         
         const isPositive = data.change >= 0;
         const changeVal = `${isPositive ? '+' : ''}${data.change.toFixed(2)}`;
         const changePctVal = `(${isPositive ? '+' : ''}${data.changePct.toFixed(2)}%)`;
 
-        changeEl.innerHTML = `
-          <span id="quote-change">${changeVal}</span>
-          <span id="quote-change-pct">${changePctVal}</span>
-          <span class="text-xs font-normal text-slate-400">相對前收盤</span>
-        `;
-        changeEl.className = `flex items-center gap-2 mt-0.5 text-sm font-semibold font-mono ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`;
+        if (changeEl) {
+          changeEl.innerHTML = `
+            <span id="quote-change">${changeVal}</span>
+            <span id="quote-change-pct">${changePctVal}</span>
+            <span class="text-xs font-normal text-slate-400">相對前收盤</span>
+          `;
+          changeEl.className = `flex items-center gap-2 mt-0.5 text-sm font-semibold font-mono ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`;
+        }
 
-        document.getElementById('val-mkt-cap').innerText = formatNumber(data.marketCap);
-        document.getElementById('val-fwd-pe').innerText = data.forwardPE ? `${data.forwardPE}x` : (data.trailingPE ? `${data.trailingPE}x (TTM)` : '-');
+        setSafeText('val-mkt-cap', formatNumber(data.marketCap));
+        setSafeText('val-fwd-pe', data.forwardPE ? `${data.forwardPE}x` : (data.trailingPE ? `${data.trailingPE}x (TTM)` : '-'));
         
         const psText = data.priceToSales ? `${data.priceToSales}x` : '-';
         const yoyText = data.revenueGrowth ? `${data.revenueGrowth > 0 ? '+' : ''}${data.revenueGrowth}%` : '-';
-        document.getElementById('val-ps-yoy').innerText = `${psText} / ${yoyText}`;
+        setSafeText('val-ps-yoy', `${psText} / ${yoyText}`);
+        setSafeText('val-earnings-date', data.earningsDate ? data.earningsDate : '即將公布');
 
-        document.getElementById('val-earnings-date').innerText = data.earningsDate ? data.earningsDate : '即將公布';
+        setSafeText('quote-low52', data.low52 ? `$${data.low52.toFixed(2)}` : '-');
+        setSafeText('quote-high52', data.high52 ? `$${data.high52.toFixed(2)}` : '-');
 
-        document.getElementById('quote-low52').innerText = data.low52 ? `$${data.low52.toFixed(2)}` : '-';
-        document.getElementById('quote-high52').innerText = data.high52 ? `$${data.high52.toFixed(2)}` : '-';
-
+        const rangeContainer = document.getElementById('quote-52w-container');
         if (data.low52 && data.high52 && data.high52 > data.low52) {
           const rangePct = Math.max(0, Math.min(100, Math.round(((data.price - data.low52) / (data.high52 - data.low52)) * 100)));
-          document.getElementById('quote-range-pct').innerText = `52 週區間水位 ${rangePct}%`;
-          document.getElementById('quote-range-bar').style.width = `${rangePct}%`;
-          document.getElementById('quote-52w-container').classList.remove('hidden');
-        } else {
-          document.getElementById('quote-52w-container').classList.add('hidden');
+          setSafeText('quote-range-pct', `52 週區間水位 ${rangePct}%`);
+          const rangeBar = document.getElementById('quote-range-bar');
+          if (rangeBar) rangeBar.style.width = `${rangePct}%`;
+          if (rangeContainer) rangeContainer.classList.remove('hidden');
+        } else if (rangeContainer) {
+          rangeContainer.classList.add('hidden');
         }
       } else {
-        document.getElementById('quote-price').innerText = '即時行情模式';
-        currencyLabel.innerText = '';
-        changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊下方「K 線圖」展開即時走勢</span>';
-        changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-medium';
-        document.getElementById('val-mkt-cap').innerText = '-';
-        document.getElementById('val-fwd-pe').innerText = '-';
-        document.getElementById('val-ps-yoy').innerText = '-';
-        document.getElementById('val-earnings-date').innerText = '-';
-        document.getElementById('quote-52w-container').classList.add('hidden');
+        setSafeText('quote-price', '即時行情模式');
+        setSafeText('quote-currency-label', '');
+        if (changeEl) {
+          changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊下方「K 線圖」展開即時走勢</span>';
+          changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-medium';
+        }
+        setSafeText('val-mkt-cap', '-');
+        setSafeText('val-fwd-pe', '-');
+        setSafeText('val-ps-yoy', '-');
+        setSafeText('val-earnings-date', '-');
+        const rangeContainer = document.getElementById('quote-52w-container');
+        if (rangeContainer) rangeContainer.classList.add('hidden');
       }
 
-      document.getElementById('link-tradingview').href = `https://www.tradingview.com/symbols/${ticker}/`;
+      const tvLink = document.getElementById('link-tradingview');
+      if (tvLink) tvLink.href = `https://www.tradingview.com/symbols/${ticker}/`;
 
       if (tvChartVisible) loadTradingViewWidget(ticker);
       if (sentimentChartVisible) renderSentimentChart(ticker);
@@ -1108,6 +1131,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const modal = document.getElementById('compare-modal');
       const selectA = document.getElementById('compare-select-a');
       const selectB = document.getElementById('compare-select-b');
+      if (!modal || !selectA || !selectB) return;
       
       const allTickers = Object.keys(stockQuotes).sort();
       const optionsHtml = allTickers.map(t => `<option value="${t}">$${t} (${stockQuotes[t].sector || '科技'})</option>`).join('');
@@ -1127,15 +1151,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function closeCompareModal() {
-      document.getElementById('compare-modal').classList.add('hidden');
+      const modal = document.getElementById('compare-modal');
+      if (modal) modal.classList.add('hidden');
     }
 
     function renderComparisonMatrix() {
-      const symA = document.getElementById('compare-select-a').value;
-      const symB = document.getElementById('compare-select-b').value;
+      const selectA = document.getElementById('compare-select-a');
+      const selectB = document.getElementById('compare-select-b');
+      if (!selectA || !selectB) return;
+
+      const symA = selectA.value;
+      const symB = selectB.value;
       
-      document.getElementById('th-comp-a').innerText = `$${symA}`;
-      document.getElementById('th-comp-b').innerText = `$${symB}`;
+      setSafeText('th-comp-a', `$${symA}`);
+      setSafeText('th-comp-b', `$${symB}`);
 
       const dataA = stockQuotes[symA] || {};
       const dataB = stockQuotes[symB] || {};
@@ -1160,13 +1189,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       ];
 
       const tbody = document.getElementById('compare-table-body');
-      tbody.innerHTML = rows.map(([label, valA, valB]) => `
-        <tr class="hover:bg-slate-800/40">
-          <td class="py-2 px-3 text-slate-400 font-sans">${label}</td>
-          <td class="py-2 px-3 text-slate-200 font-semibold">${valA}</td>
-          <td class="py-2 px-3 text-slate-200 font-semibold">${valB}</td>
-        </tr>
-      `).join('');
+      if (tbody) {
+        tbody.innerHTML = rows.map(([label, valA, valB]) => `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-2 px-3 text-slate-400 font-sans">${label}</td>
+            <td class="py-2 px-3 text-slate-200 font-semibold">${valA}</td>
+            <td class="py-2 px-3 text-slate-200 font-semibold">${valB}</td>
+          </tr>
+        `).join('');
+      }
     }
 
     function openDeepDiveModal(ticker) {
@@ -1174,16 +1205,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const modal = document.getElementById('deepdive-modal');
       const tickerTweets = allTweets.filter(t => t && (t.tickers || []).includes(ticker));
       
-      document.getElementById('modal-ticker-title').innerText = `$${ticker}`;
-      if (tickerTweets.length === 0) return;
+      setSafeText('modal-ticker-title', `$${ticker}`);
+      if (tickerTweets.length === 0 || !modal) return;
 
       const chronological = [...tickerTweets].sort((a, b) => String(a.iso_date || a.date).localeCompare(String(b.iso_date || b.date)));
       const firstMention = chronological[0];
       const latestMention = chronological[chronological.length - 1];
 
-      document.getElementById('modal-first-date').innerText = firstMention ? firstMention.date : '-';
-      document.getElementById('modal-mention-count').innerText = `${tickerTweets.length} 則 (${tickerTweets.filter(t=>t.is_analyzed).length} 則已分析)`;
-      document.getElementById('modal-latest-stance').innerText = latestMention ? (latestMention.sentiment === 'Bullish' ? '看多 (Bullish)' : (latestMention.sentiment === 'Bearish' ? '看空 (Bearish)' : '中立 (Neutral)')) : '-';
+      setSafeText('modal-first-date', firstMention ? firstMention.date : '-');
+      setSafeText('modal-mention-count', `${tickerTweets.length} 則 (${tickerTweets.filter(t=>t.is_analyzed).length} 則已分析)`);
+      setSafeText('modal-latest-stance', latestMention ? (latestMention.sentiment === 'Bullish' ? '看多 (Bullish)' : (latestMention.sentiment === 'Bearish' ? '看空 (Bearish)' : '中立 (Neutral)')) : '-');
 
       const keyPoints = [...tickerTweets]
         .filter(t => t && t.summary)
@@ -1191,61 +1222,65 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .slice(0, 3);
 
       const keyContainer = document.getElementById('modal-key-points');
-      if (keyPoints.length > 0) {
-        keyContainer.innerHTML = keyPoints.map((item, idx) => `
-          <div class="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800 space-y-1.5">
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-amber-400 font-bold font-mono">里程碑 #${idx + 1} (${item.date})</span>
-              <a href="${item.url}" target="_blank" class="text-slate-400 hover:text-white text-xs">原始推文 ↗</a>
+      if (keyContainer) {
+        if (keyPoints.length > 0) {
+          keyContainer.innerHTML = keyPoints.map((item, idx) => `
+            <div class="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800 space-y-1.5">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-amber-400 font-bold font-mono">里程碑 #${idx + 1} (${item.date})</span>
+                <a href="${item.url}" target="_blank" class="text-slate-400 hover:text-white text-xs">原始推文 ↗</a>
+              </div>
+              <div class="text-sm font-semibold text-slate-100">${item.summary}</div>
+              <div class="text-xs text-slate-300 leading-relaxed">${item.translation_zh || item.text}</div>
             </div>
-            <div class="text-sm font-semibold text-slate-100">${item.summary}</div>
-            <div class="text-xs text-slate-300 leading-relaxed">${item.translation_zh || item.text}</div>
-          </div>
-        `).join('');
-      } else {
-        keyContainer.innerHTML = '<div class="text-xs text-slate-500">尚無足夠的 AI 重點摘要紀錄。</div>';
+          `).join('');
+        } else {
+          keyContainer.innerHTML = '<div class="text-xs text-slate-500">尚無足夠的 AI 重點摘要紀錄。</div>';
+        }
       }
 
       const timelineContainer = document.getElementById('modal-timeline');
-      timelineContainer.innerHTML = chronological.map(item => `
-        <div class="flex items-center gap-3 text-xs border-l-2 border-slate-800 pl-3 py-1 font-mono">
-          <span class="text-slate-500">${item.date}</span>
-          <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${item.sentiment==='Bullish'?'bg-emerald-500/10 text-emerald-400':(item.sentiment==='Bearish'?'bg-rose-500/10 text-rose-400':'bg-blue-500/10 text-blue-400')}">${item.sentiment}</span>
-          <span class="text-slate-300 truncate max-w-md">${item.summary || item.text}</span>
-        </div>
-      `).join('');
+      if (timelineContainer) {
+        timelineContainer.innerHTML = chronological.map(item => `
+          <div class="flex items-center gap-3 text-xs border-l-2 border-slate-800 pl-3 py-1 font-mono">
+            <span class="text-slate-500">${item.date}</span>
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${item.sentiment==='Bullish'?'bg-emerald-500/10 text-emerald-400':(item.sentiment==='Bearish'?'bg-rose-500/10 text-rose-400':'bg-blue-500/10 text-blue-400')}">${item.sentiment}</span>
+            <span class="text-slate-300 truncate max-w-md">${item.summary || item.text}</span>
+          </div>
+        `).join('');
+      }
 
       const riskTweets = tickerTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('警戒') || t.summary.includes('跌'))));
       const riskContainer = document.getElementById('modal-risks');
-      if (riskTweets.length > 0) {
-        riskContainer.innerHTML = riskTweets.slice(0, 3).map(item => `
-          <div class="bg-rose-950/20 border border-rose-900/40 p-3 rounded-xl text-xs space-y-1">
-            <div class="flex justify-between text-rose-400 font-mono font-semibold">
-              <span>${item.date}</span>
-              <a href="${item.url}" target="_blank" class="hover:underline">來源 ↗</a>
+      if (riskContainer) {
+        if (riskTweets.length > 0) {
+          riskContainer.innerHTML = riskTweets.slice(0, 3).map(item => `
+            <div class="bg-rose-950/20 border border-rose-900/40 p-3 rounded-xl text-xs space-y-1">
+              <div class="flex justify-between text-rose-400 font-mono font-semibold">
+                <span>${item.date}</span>
+                <a href="${item.url}" target="_blank" class="hover:underline">來源 ↗</a>
+              </div>
+              <div class="text-rose-200">${item.summary || item.translation_zh || item.text}</div>
             </div>
-            <div class="text-rose-200">${item.summary || item.translation_zh || item.text}</div>
-          </div>
-        `).join('');
-      } else {
-        riskContainer.innerHTML = '<div class="text-xs text-slate-500">歷史貼文中未出現重大看空或風險警語。</div>';
+          `).join('');
+        } else {
+          riskContainer.innerHTML = '<div class="text-xs text-slate-500">歷史貼文中未出現重大看空或風險警語。</div>';
+        }
       }
 
       modal.classList.remove('hidden');
     }
 
     function closeDeepDiveModal() {
-      document.getElementById('deepdive-modal').classList.add('hidden');
+      const modal = document.getElementById('deepdive-modal');
+      if (modal) modal.classList.add('hidden');
     }
 
     function filterByTicker(ticker) {
-      if (!ticker) {
-        currentTicker = '';
-      } else {
-        currentTicker = String(ticker).toUpperCase();
-      }
+      currentTicker = ticker ? String(ticker).toUpperCase() : '';
       displayLimit = 25;
-      document.getElementById('clear-ticker-btn').classList.toggle('hidden', !currentTicker);
+      const clearBtn = document.getElementById('clear-ticker-btn');
+      if (clearBtn) clearBtn.classList.toggle('hidden', !currentTicker);
       updateAggregatedView();
     }
 
@@ -1305,6 +1340,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function render() {
       const container = document.getElementById('tweets-list');
+      if (!container) return;
+      
       const viewFiltered = getFilteredByView(allTweets);
 
       let filtered = viewFiltered.filter(t => {
@@ -1331,11 +1368,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
       const loadMoreContainer = document.getElementById('load-more-container');
       const loadMoreCount = document.getElementById('load-more-count');
-      if (visibleItems.length < totalFiltered) {
-        loadMoreContainer.classList.remove('hidden');
-        loadMoreCount.innerText = `${visibleItems.length} / ${totalFiltered}`;
-      } else {
-        loadMoreContainer.classList.add('hidden');
+      if (loadMoreContainer && loadMoreCount) {
+        if (visibleItems.length < totalFiltered) {
+          loadMoreContainer.classList.remove('hidden');
+          loadMoreCount.innerText = `${visibleItems.length} / ${totalFiltered}`;
+        } else {
+          loadMoreContainer.classList.add('hidden');
+        }
       }
 
       if (visibleItems.length === 0) {
@@ -1409,12 +1448,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
-      drawer.classList.toggle('hidden');
-      drawer.classList.toggle('flex');
+      if (drawer) {
+        drawer.classList.toggle('hidden');
+        drawer.classList.toggle('flex');
+      }
     }
 
     function appendChatMessage(sender, htmlContent) {
       const container = document.getElementById('chat-messages');
+      if (!container) return;
       const isUser = sender === 'user';
       const msgDiv = document.createElement('div');
       msgDiv.className = isUser 
@@ -1426,13 +1468,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function handleQuickAsk(text) {
-      document.getElementById('chat-input').value = text;
-      handleChatSubmit();
+      const input = document.getElementById('chat-input');
+      if (input) {
+        input.value = text;
+        handleChatSubmit();
+      }
     }
 
     function handleChatSubmit(e) {
       if (e) e.preventDefault();
       const input = document.getElementById('chat-input');
+      if (!input) return;
       const query = input.value.trim();
       if (!query) return;
 
@@ -1545,27 +1591,39 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       }
 
       searchQuery = query.toLowerCase();
-      document.getElementById('search-input').value = query;
+      const sInput = document.getElementById('search-input');
+      if (sInput) sInput.value = query;
       render();
       appendChatMessage('ai', `已為你篩選包含關鍵字「<b>${query}</b>」的推文內容。`);
     }
 
-    document.getElementById('search-input').addEventListener('input', (e) => {
-      searchQuery = e.target.value.trim().toLowerCase();
-      displayLimit = 25;
-      render();
-    });
+    // 頁面生命週期初始化 (確保 DOM 全部就緒)
+    window.addEventListener('DOMContentLoaded', () => {
+      try {
+        setSafeText('last-update-time', `建置時間：${new Date().toLocaleString('zh-TW', { hour12: false })}`);
 
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        closeDeepDiveModal();
-        closeCompareModal();
+        const sInput = document.getElementById('search-input');
+        if (sInput) {
+          sInput.addEventListener('input', (e) => {
+            searchQuery = e.target.value.trim().toLowerCase();
+            displayLimit = 25;
+            render();
+          });
+        }
+
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            closeDeepDiveModal();
+            closeCompareModal();
+          }
+        });
+
+        // 啟動全域視圖
+        setViewMode('all');
+      } catch (err) {
+        console.error("DOM 初始化異常:", err);
       }
     });
-
-    document.getElementById('last-update-time').innerText = `建置時間：${new Date().toLocaleString('zh-TW', { hour12: false })}`;
-
-    setViewMode('all');
   </script>
 </body>
 </html>
@@ -1573,7 +1631,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
-    tweets_json_str = json.dumps(tweets, ensure_ascii=False)
+    
+    # 安全注入：防範 </script> 破壞語法
+    tweets_json_str = json.dumps(tweets, ensure_ascii=False).replace("</script>", "<\\/script>")
     
     ordered_tickers = []
     for t in recent_tickers:
@@ -1585,9 +1645,9 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
             ordered_tickers.append(t)
 
     top_tickers_sorted = [[t, ticker_counts.get(t, 0)] for t in ordered_tickers[:60]]
-    top_tickers_json_str = json.dumps(top_tickers_sorted, ensure_ascii=False)
-    stock_quotes_json_str = json.dumps(stock_quotes, ensure_ascii=False)
-    sector_mapping_json_str = json.dumps(SECTOR_MAPPING, ensure_ascii=False)
+    top_tickers_json_str = json.dumps(top_tickers_sorted, ensure_ascii=False).replace("</script>", "<\\/script>")
+    stock_quotes_json_str = json.dumps(stock_quotes, ensure_ascii=False).replace("</script>", "<\\/script>")
+    sector_mapping_json_str = json.dumps(SECTOR_MAPPING, ensure_ascii=False).replace("</script>", "<\\/script>")
 
     html_rendered = HTML_TEMPLATE.replace("__TWEETS_DATA__", tweets_json_str) \
                                  .replace("__TOP_TICKERS__", top_tickers_json_str) \
@@ -1596,7 +1656,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (獨立乾淨版本)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (434 則推文資料庫安全注入完成)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
