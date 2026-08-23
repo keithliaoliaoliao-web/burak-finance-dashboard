@@ -7,33 +7,90 @@ import yfinance as yf
 # ==========================================
 # 參數設定區 (Burak Finance 專屬)
 # ==========================================
-TARGET_HANDLE = "burak_finance"
+TARGET_HANDLE = os.environ.get("TARGET_HANDLE", "burak_finance")
 TWEETS_FILE = "data/tweets.json"
 CACHE_FILE = "data/sentiment_cache.json"
 OUTPUT_HTML = "docs/index.html"
 
 TWITTER_EPOCH = 1288834974657
 
-# 產業鏈與板塊分類定義 (含生技醫療與美股科技族群)
+# 【第一層】：精準擴充的美股 9 大核心產業板塊對應字典
 SECTOR_MAPPING = {
-    "生技與醫療製藥": ["HIMS", "MRNA", "JNJ", "TEM", "LLY", "NVO", "ISRG", "CRSP", "VRTX", "AMGN"],
-    "光通訊與雷射": ["AAOI", "LITE", "COHR", "POET", "CRDO", "CIEN", "FN"],
-    "AI 算力與晶片": ["NBIS", "NVDA", "AMD", "AVGO", "MRVL", "ARM", "INTC", "TSM", "QCOM"],
-    "記憶體與儲存": ["SNDK", "MU", "WDC", "PSTG", "STX"],
-    "太空與國防科技": ["RKLB", "RCAT", "ASTS", "AVAV", "KTOS", "LMT", "RTX", "PL"],
-    "潔淨能源與電力": ["BE", "SMR", "OKLO", "LEU", "UUUU", "VRT", "CEG", "FLNC", "GEV"],
-    "高成長雲端軟體": ["PLTR", "SNOW", "NOW", "CRWD", "DDOG", "NET", "PATH", "MDB", "ORCL"]
+    "生技與醫療製藥": [
+        "HIMS", "MRNA", "JNJ", "TEM", "LLY", "NVO", "ISRG", "CRSP", "VRTX", "AMGN", 
+        "BNTX", "PFE", "ABBV", "BIIB", "REGN", "ILMN", "EXAS", "DNA"
+    ],
+    "半導體設備與封測": [
+        "AMAT", "ASML", "LRCX", "KLAC", "AEHR", "AMKR", "ONTO", "CAMT", "TER", "ICHR", 
+        "FORM", "COHR", "ACLS", "UCTT"
+    ],
+    "AI 算力與高速互連": [
+        "NVDA", "AMD", "AVGO", "MRVL", "ARM", "ALAB", "INTC", "TSM", "QCOM", "CRDO", 
+        "POET", "MTSI", "AOSL", "DIOD"
+    ],
+    "光通訊與雷射網通": [
+        "AAOI", "LITE", "COHR", "POET", "CIEN", "FN", "SIVE", "GLW", "CBRS", "ACIA", 
+        "HLIT", "EXTR", "CALX", "INFN"
+    ],
+    "記憶體與儲存設備": [
+        "SNDK", "MU", "WDC", "PSTG", "STX", "NTAP"
+    ],
+    "AI 算力中心與採礦": [
+        "NBIS", "APLD", "CRWV", "HUT", "IREN", "CIFR", "CLSK", "MARA", "RIOT", "CORZ", 
+        "WULF", "BITF", "SDIG"
+    ],
+    "太空科技與國防": [
+        "RKLB", "RCAT", "ASTS", "AVAV", "KTOS", "LMT", "RTX", "PL", "NOC", "GD", 
+        "BA", "HII", "LDOS", "AXON"
+    ],
+    "潔淨能源與電力設備": [
+        "BE", "SMR", "OKLO", "LEU", "UUUU", "VRT", "CEG", "FLNC", "GEV", "AEP", 
+        "NEE", "CCJ", "ENPH", "SEDG", "FSLR", "AES", "VST"
+    ],
+    "雲端巨頭與平台軟體": [
+        "AMZN", "MSFT", "GOOGL", "META", "AAPL", "PLTR", "SNOW", "NOW", "CRWD", "DDOG", 
+        "NET", "PATH", "MDB", "ORCL", "CRM", "PANW", "ZS", "ADBE"
+    ],
+    "指數與主題科技 ETF": [
+        "ARKK", "QQQ", "SPY", "SMH", "SOXX", "XBI", "IWM", "ARKW", "ARKG"
+    ]
 }
 
-def get_sector_for_ticker(ticker):
-    """查詢股票所屬板塊"""
-    for sector, symbols in SECTOR_MAPPING.items():
-        if ticker.upper() in symbols:
-            return sector
+def resolve_sector(ticker, yf_info=None):
+    """【雙層分類器】：結合靜態字典與 Yahoo Finance 英文產業語意自動轉譯"""
+    sym = ticker.upper().strip()
+    
+    # 1. 優先比對靜態精準清單
+    for sector_name, symbols in SECTOR_MAPPING.items():
+        if sym in symbols:
+            return sector_name
+            
+    # 2. 第二層：利用 yfinance 的 sector 與 industry 進行語意分析
+    if yf_info and isinstance(yf_info, dict):
+        ind = str(yf_info.get("industry", "")).lower()
+        sec = str(yf_info.get("sector", "")).lower()
+
+        if any(w in ind for w in ["biotechnology", "drug", "pharmaceutical", "healthcare", "medical"]):
+            return "生技與醫療製藥"
+        if any(w in ind for w in ["semiconductor equipment", "semiconductor - equipment", "packaging"]):
+            return "半導體設備與封測"
+        if any(w in ind for w in ["semiconductor", "integrated circuits"]):
+            return "AI 算力與高速互連"
+        if any(w in ind for w in ["communication equipment", "fiber", "optical", "telecom"]):
+            return "光通訊與雷射網通"
+        if any(w in ind for w in ["computer hardware", "data storage", "memory"]):
+            return "記憶體與儲存設備"
+        if any(w in ind for w in ["aerospace", "defense"]):
+            return "太空科技與國防"
+        if any(w in ind for w in ["utilities", "uranium", "nuclear", "solar", "renewable", "electrical"]):
+            return "潔淨能源與電力設備"
+        if any(w in ind for w in ["software", "internet", "cloud", "information technology"]):
+            return "雲端巨頭與平台軟體"
+
     return "其他科技 / 綜合"
 
 def snowflake_to_iso(tweet_id_str):
-    """利用 Twitter Snowflake 演算法計算精確發布時間"""
+    """利用 Twitter Snowflake 演算法計算 UTC 發布時間"""
     try:
         t_id = int(str(tweet_id_str).strip())
         timestamp_ms = (t_id >> 22) + TWITTER_EPOCH
@@ -82,7 +139,7 @@ def load_cache(filepath):
         return []
 
 def extract_tickers(text):
-    """從推文內文中萃取美股代號"""
+    """萃取推文中的美股代號"""
     if not text:
         return []
     matches = re.findall(r"(?<!\w)\$([A-Za-z]{1,6})\b", text)
@@ -114,7 +171,7 @@ def extract_tweet_text(item):
     return ""
 
 def parse_date(item, tweet_id=""):
-    """精確解析推文日期"""
+    """解析推文發布時間"""
     if tweet_id and tweet_id.isdigit() and len(tweet_id) >= 10:
         d_str, m_str, iso_str = snowflake_to_iso(tweet_id)
         if d_str:
@@ -146,7 +203,7 @@ def parse_date(item, tweet_id=""):
     return s, "未知月份", s
 
 def extract_metrics(item):
-    """解析互動指標（按讚、轉推、瀏覽量）"""
+    """解析按讚、轉推與瀏覽量"""
     likes, retweets, views = 0, 0, 0
     containers = [item]
     for sub in ["public_metrics", "metrics", "stats", "legacy"]:
@@ -260,8 +317,8 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
     return cleaned, ticker_counts, recent_tickers
 
 def fetch_stock_quotes_and_fundamentals(tickers):
-    """獲取美股行情與基本面估值數據 (含財報日、市值、P/E、P/S、YoY)"""
-    print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情與基本面估值數據...", flush=True)
+    """獲取美股市場行情與基本面數據，並使用雙層分類引擎確認產業板塊"""
+    print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情與智慧產業板塊分類...", flush=True)
     quotes = {}
     
     for symbol in tickers:
@@ -276,14 +333,12 @@ def fetch_stock_quotes_and_fundamentals(tickers):
             low_52 = getattr(fast, "year_low", None) or info.get("fiftyTwoWeekLow")
             volume = getattr(fast, "last_volume", None) or getattr(fast, "regular_market_volume", None) or info.get("volume")
 
-            # 基本面指標
             market_cap = getattr(fast, "market_cap", None) or info.get("marketCap")
             forward_pe = info.get("forwardPE")
             trailing_pe = info.get("trailingPE")
             price_to_sales = info.get("priceToSalesTrailing12Months")
             revenue_growth = info.get("revenueGrowth")
 
-            # 下次財報公布日
             earnings_date_str = None
             try:
                 cal = ticker_obj.calendar
@@ -291,6 +346,9 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                     earnings_date_str = str(cal["Earnings Date"][0])[:10]
             except Exception:
                 pass
+
+            # 透過雙層引擎精確取得板塊
+            sector_name = resolve_sector(symbol, info)
 
             if current_price is not None and float(current_price) > 0:
                 change = (current_price - prev_close) if prev_close else 0.0
@@ -310,11 +368,13 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                     "priceToSales": round(float(price_to_sales), 2) if price_to_sales else None,
                     "revenueGrowth": round(float(revenue_growth) * 100, 1) if revenue_growth else None,
                     "earningsDate": earnings_date_str,
-                    "sector": get_sector_for_ticker(symbol)
+                    "sector": sector_name
                 }
-                print(f"  ✅ ${symbol}: ${current_price:.2f} ({change_pct:+.2f}%) | 板塊: {get_sector_for_ticker(symbol)}", flush=True)
+                print(f"  ✅ ${symbol}: ${current_price:.2f} ({change_pct:+.2f}%) | 板塊: {sector_name}", flush=True)
+            else:
+                quotes[symbol] = {"sector": sector_name}
         except Exception:
-            continue
+            quotes[symbol] = {"sector": resolve_sector(symbol)}
 
     return quotes
 
@@ -353,7 +413,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white">
 
-  <!-- 頂部導航 (Burak 亮橘品牌設計) -->
+  <!-- 頂部導航 (Burak 亮橘金品牌設計) -->
   <header class="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -416,18 +476,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- 模組 1：產業鏈/板塊分類導航列 (含生技醫療與自選股切換) -->
+    <!-- 產業鏈/板塊分類導航列 -->
     <div class="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3.5 flex flex-wrap items-center gap-1.5" id="sector-bar">
       <span class="text-xs font-bold text-slate-400 mr-2 flex items-center gap-1">🏢 產業板塊：</span>
       <button onclick="setSectorFilter('ALL')" class="sector-btn active px-3 py-1 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 text-white transition" data-sector="ALL">全部板塊</button>
       <button onclick="setSectorFilter('WATCHLIST')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 transition" data-sector="WATCHLIST">⭐ 我的自選股</button>
       <button onclick="setSectorFilter('生技與醫療製藥')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-emerald-400 hover:bg-slate-800 transition" data-sector="生技與醫療製藥">💊 生技與醫療製藥</button>
-      <button onclick="setSectorFilter('光通訊與雷射')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="光通訊與雷射">⚡ 光通訊與雷射</button>
-      <button onclick="setSectorFilter('AI 算力與晶片')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="AI 算力與晶片">🧠 AI 算力與晶片</button>
-      <button onclick="setSectorFilter('記憶體與儲存')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="記憶體與儲存">💾 記憶體與儲存</button>
-      <button onclick="setSectorFilter('太空與國防科技')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="太空與國防科技">🚀 太空與國防科技</button>
-      <button onclick="setSectorFilter('潔淨能源與電力')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="潔淨能源與電力">🔋 潔淨能源與電力</button>
-      <button onclick="setSectorFilter('高成長雲端軟體')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="高成長雲端軟體">☁️ 高成長雲端軟體</button>
+      <button onclick="setSectorFilter('半導體設備與封測')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="半導體設備與封測">🔬 半導體設備與封測</button>
+      <button onclick="setSectorFilter('AI 算力與高速互連')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="AI 算力與高速互連">🧠 AI 晶片與互連</button>
+      <button onclick="setSectorFilter('光通訊與雷射網通')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="光通訊與雷射網通">⚡ 光通訊與雷射</button>
+      <button onclick="setSectorFilter('記憶體與儲存設備')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="記憶體與儲存設備">💾 記憶體與儲存</button>
+      <button onclick="setSectorFilter('AI 算力中心與採礦')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="AI 算力中心與採礦">⛏️ 算力中心與採礦</button>
+      <button onclick="setSectorFilter('太空科技與國防')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="太空科技與國防">🚀 太空與國防</button>
+      <button onclick="setSectorFilter('潔淨能源與電力設備')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="潔淨能源與電力設備">🔋 潔淨能源與電力</button>
+      <button onclick="setSectorFilter('雲端巨頭與平台軟體')" class="sector-btn px-3 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition" data-sector="雲端巨頭與平台軟體">☁️ 雲端軟體與巨頭</button>
     </div>
 
     <!-- 熱門與近期關注標的快速過濾區 -->
@@ -446,7 +508,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="flex flex-wrap gap-1.5" id="top-tickers-bar"></div>
     </div>
 
-    <!-- 模組 2 & 3 & 4 & 5：個股即時行情 ＋ 基本面估值 ＋ 財報倒數 ＋ 情緒趨勢專區 -->
+    <!-- 個股即時行情專區 -->
     <div id="stock-quote-section" class="bg-gradient-to-r from-slate-900/90 via-slate-900/70 to-slate-900/90 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden hidden space-y-4">
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         
@@ -520,7 +582,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- 歷史多空情緒趨勢圖容器 (Chart.js) -->
+      <!-- 歷史多空情緒趨勢圖容器 -->
       <div id="sentiment-chart-wrapper" class="hidden border-t border-slate-800/80 pt-4">
         <div class="text-xs font-semibold text-slate-400 mb-2 flex items-center gap-1.5">
           <span>📈</span> 近期 6 個月多空立場演變趨勢 (Sentiment Trend)
@@ -540,7 +602,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- 搜尋、排序與觀點篩選 -->
     <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
       <div class="flex items-center gap-2 flex-1 max-w-lg">
-        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的（例如: HIMS, NBIS, RKLB）..." 
+        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的（例如: HIMS, NBIS, AMAT, RKLB）..." 
           class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition" />
         
         <select id="sort-select" onchange="changeSort(this.value)" class="bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-amber-500 transition cursor-pointer shrink-0">
@@ -628,15 +690,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         👋 你好！我是 Burak AI 助理，你可以直接點擊或詢問：
         <div class="mt-2 flex flex-wrap gap-1.5">
           <button onclick="handleQuickAsk('日報')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">📅 日報</button>
-          <button onclick="handleQuickAsk('目前有哪些生技醫療股票？')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">💊 生技醫療股</button>
+          <button onclick="handleQuickAsk('目前有哪些半導體設備股票？')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔬 半導體設備</button>
+          <button onclick="handleQuickAsk('幫我看 AMAT')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 AMAT</button>
           <button onclick="handleQuickAsk('幫我看 HIMS')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 HIMS</button>
-          <button onclick="handleQuickAsk('幫我看 NBIS')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 NBIS</button>
         </div>
       </div>
     </div>
 
     <form onsubmit="handleChatSubmit(event)" class="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
-      <input type="text" id="chat-input" placeholder="輸入問題（例如：幫我看 HIMS 或 NBIS）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
+      <input type="text" id="chat-input" placeholder="輸入問題（例如：半導體設備有哪些觀點？）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
       <button type="submit" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition">發送</button>
     </form>
   </div>
@@ -788,7 +850,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         filtered = filtered.filter(t => t.tickers.some(sym => isWatchlisted(sym)));
       } else if (currentSector !== 'ALL') {
         const sectorTickers = sectorMapping[currentSector] || [];
-        filtered = filtered.filter(t => t.tickers.some(sym => sectorTickers.includes(sym)));
+        filtered = filtered.filter(t => t.tickers.some(sym => sectorTickers.includes(sym) || (stockQuotes[sym] && stockQuotes[sym].sector === currentSector)));
       }
 
       return filtered;
@@ -1392,6 +1454,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
+      if (q.includes('設備') || q.includes('封測') || q.includes('AMAT') || q.includes('ASML')) {
+        setSectorFilter('半導體設備與封測');
+        appendChatMessage('ai', '🔬 <b>已為你篩選「半導體設備與封測」板塊！</b><br>包含 \\$AMAT, \\$ASML, \\$AEHR, \\$AMKR, \\$LRCX 等標的。');
+        return;
+      }
+
       if (q.includes('偏多') || q.includes('看多') || q.includes('BULLISH')) {
         const counts = {};
         allTweets.forEach(t => {
@@ -1411,7 +1479,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let resHtml = '🚀 <b>目前社群立場偏多的精選標的：</b><br>';
         bullishList.forEach(([sym, data]) => {
           const qData = stockQuotes[sym];
-          const priceStr = qData ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(1)}%)` : '';
+          const priceStr = qData && qData.price ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(1)}%)` : '';
           resHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button> ${priceStr}：${data.bullish} 則看多 (${Math.round(data.bullish/data.total*100)}%)<br>`;
         });
         appendChatMessage('ai', resHtml);
@@ -1428,8 +1496,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
           const first = chronological[0];
           const latest = chronological[chronological.length - 1];
-          const qData = stockQuotes[symbol];
-          const priceText = qData ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)` : '即時行情模式';
+          const qData = stockQuotes[symbol] || {};
+          const priceText = qData.price ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)` : '即時行情模式';
 
           if (q.includes('風險') || q.includes('疑慮') || q.includes('看空')) {
             const riskTweets = tickerTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('跌'))));
@@ -1447,7 +1515,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
           let analysisHtml = `
             🎯 <b>\\$${symbol} 即時論點脈絡分析：</b><br>
-            • <b>所屬板塊：</b>${getSectorForTicker(symbol)}<br>
+            • <b>所屬板塊：</b>${qData.sector || '科技'}<br>
             • <b>當前股價：</b>${priceText}<br>
             • <b>提及次數：</b>共 ${tickerTweets.length} 則推文<br>
             • <b>最新立場：</b>${latest ? latest.sentiment : '中立'}<br>
@@ -1513,7 +1581,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak Finance 儀表板成功產出至 {OUTPUT_HTML} (亮橘金主題、生技板塊與估值卡已全部就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (亮橘金主題、雙層板塊分類與估值卡已全部就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
@@ -1521,7 +1589,7 @@ if __name__ == "__main__":
     cleaned_tweets, counts, recent_tickers = clean_tweet_data(tweets_raw, sentiment_cache)
     
     all_sector_symbols = [s for sub in SECTOR_MAPPING.values() for s in sub]
-    combined_target_list = list(dict.fromkeys(recent_tickers + all_sector_symbols + [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:60]]))[:90]
+    combined_target_list = list(dict.fromkeys(recent_tickers + all_sector_symbols + [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:60]]))[:110]
     
     stock_quotes = fetch_stock_quotes_and_fundamentals(combined_target_list)
     generate_html(cleaned_tweets, counts, recent_tickers, stock_quotes)
