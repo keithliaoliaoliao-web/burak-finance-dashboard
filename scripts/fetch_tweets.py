@@ -12,22 +12,19 @@ from datetime import datetime
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 
-# 最大向下探索頁數（遇重複資料庫會自動提前停止，避免被 Twitter 限速）
-MAX_PAGES_TO_FETCH = 10
+# 向下深度翻頁上限 (每次向下探測 12 頁)
+MAX_PAGES_TO_FETCH = 12
 
 AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN", "").strip()
 CT0 = os.environ.get("TWITTER_CT0", "").strip()
 
-# Twitter 官方公開 Bearer Token 與 Snowflake 起始紀元
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 TWITTER_EPOCH = 1288834974657
 
 def log(message):
-    """即時輸出日誌至 GitHub Actions 控制台"""
     print(message, flush=True)
 
 def snowflake_to_iso(tweet_id_str):
-    """利用 Twitter Snowflake 演算法由推文 ID 反推精確 UTC 發布時間"""
     try:
         t_id = int(str(tweet_id_str).strip())
         timestamp_ms = (t_id >> 22) + TWITTER_EPOCH
@@ -37,9 +34,8 @@ def snowflake_to_iso(tweet_id_str):
         return None
 
 def load_existing_tweets(filepath):
-    """讀取本地現有推文資料庫"""
     if not os.path.exists(filepath):
-        log("ℹ️ 本地 tweets.json 不存在，將建立新資料庫。")
+        log("ℹ️ 本地 tweets.json 尚不存在，將建立新檔案。")
         return []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -65,7 +61,6 @@ def load_existing_tweets(filepath):
         return []
 
 def get_user_id_and_initial_tweets(screen_name):
-    """取得作者的 Twitter 數字 User ID 與第一批即時推文"""
     timestamp = int(time.time())
     url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}?t={timestamp}"
 
@@ -125,8 +120,7 @@ def get_user_id_and_initial_tweets(screen_name):
 
     return user_id, tweets
 
-def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=10):
-    """透過 Twitter 官方 GraphQL 游標分頁深度挖掘（具備 Early-Stopping 遇重複早停機制）"""
+def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=12):
     if not user_id or not AUTH_TOKEN or not CT0:
         log("⚠️ 未具備完整認證 Cookie 或 User ID，跳過 GraphQL 歷史回填。")
         return []
@@ -137,7 +131,7 @@ def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=
         "x-csrf-token": CT0,
         "x-twitter-active-user": "yes",
         "x-twitter-auth-type": "OAuth2Session",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Content-Type": "application/json"
     }
 
@@ -152,7 +146,7 @@ def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=
     cursor = None
     seen_ids = set()
 
-    log(f"🚀 [歷史探索啟動] 開始透過 GraphQL 分頁檢索 @{screen_name} (上限 {max_pages} 頁，遇既有資料自動提早結束)...")
+    log(f"🚀 [歷史探索啟動] 開始透過 GraphQL 檢索 @{screen_name} (上限 {max_pages} 頁)...")
 
     for page in range(1, max_pages + 1):
         variables = {
@@ -221,38 +215,29 @@ def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=
                 continue
 
         if not success or not page_tweets:
-            log(f"  ℹ️ 已到達歷史推文邊界或未取得新資料，於第 {page} 頁結束挖掘。")
+            log(f"  ℹ️ 已到達歷史推文邊界，於第 {page} 頁結束。")
             break
 
         all_history.extend(page_tweets)
-        
-        # 檢查本頁是否有全新推文（不在資料庫中）
         new_in_page = [t for t in page_tweets if t["id"] not in existing_ids_set]
         log(f"  📜 [第 {page}/{max_pages} 頁] 解析出 {len(page_tweets)} 則推文 (其中全新: {len(new_in_page)} 則)")
-
-        # 【Early-Stopping 智慧保護】
-        # 若不是第 1 頁，且整頁推文全都是資料庫已收錄的舊推文，表示已接軌歷史庫，自動提早結束！
-        if page > 1 and len(new_in_page) == 0:
-            log("  🛑 [智慧早停] 本頁所有推文皆已存在於本地資料庫中，已成功接軌歷史紀錄，停止向下請求以節省資源！")
-            break
 
         if not next_cursor or next_cursor == cursor:
             break
 
         cursor = next_cursor
-        time.sleep(1.0)  # 防限速保護間隔
+        time.sleep(1.0)
 
     log(f"✨ 歷史探索完成，累計取得 {len(all_history)} 則推文！")
     return all_history
 
 def enrich_recent_metrics(tweets_list, target_count=35):
-    """為最新 35 則推文同步官方即時互動數據"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     updated = 0
     check_limit = min(len(tweets_list), target_count)
-    log(f"🔄 正在為最新 {check_limit} 則推文同步即時互動數據 (Likes/RT/Views)...")
+    log(f"🔄 正在為最新 {check_limit} 則推文連線同步即時互動數據...")
 
     for tw in tweets_list[:check_limit]:
         t_id = str(tw.get("id", "")).strip()
@@ -287,12 +272,10 @@ def enrich_recent_metrics(tweets_list, target_count=35):
     return tweets_list
 
 def save_merged_tweets(filepath, incoming_tweets):
-    """將抓取到的推文與現有資料庫合併去重，並由新到舊排序儲存"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     existing_tweets = load_existing_tweets(filepath)
 
     tweets_map = {str(t.get("id", "")).strip(): t for t in existing_tweets if t.get("id")}
-
     added_count = 0
     updated_count = 0
 
@@ -304,7 +287,6 @@ def save_merged_tweets(filepath, incoming_tweets):
         if t_id not in tweets_map:
             tweets_map[t_id] = t
             added_count += 1
-            log(f"  ➕ 全新收錄推文 [{t_id}] ({t['created_at']}): {t['text'][:35]}...")
         else:
             old = tweets_map[t_id]
             if t.get("favorite_count", 0) >= old.get("favorite_count", 0):
@@ -319,20 +301,22 @@ def save_merged_tweets(filepath, incoming_tweets):
 
     merged_list = list(tweets_map.values())
 
-    # 依 Snowflake 精確時間降序排序（最新在最前）
+    # 【防清空安全鎖】：若合併結果為空，且本地原本有資料，絕對不執行覆蓋！
+    if len(merged_list) == 0 and len(existing_tweets) > 0:
+        log("🛑 [觸發安全熔斷] 本次未抓到推文且合併清單為空，保留原有資料庫，避免清空！")
+        return
+
     merged_list.sort(
         key=lambda x: str(x.get("created_at") or snowflake_to_iso(x.get("id")) or "1970-01-01T00:00:00Z"),
         reverse=True
     )
 
-    # 針對前 35 則最新推文同步即時數據
     merged_list = enrich_recent_metrics(merged_list, target_count=35)
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(merged_list, f, ensure_ascii=False, indent=2)
 
     file_size_kb = os.path.getsize(filepath) / 1024.0
-
     log(
         f"📊 [結算報告] 本次探索: {len(incoming_tweets)} 則 | "
         f"全新歷史新增: {added_count} 則 | "
@@ -340,27 +324,17 @@ def save_merged_tweets(filepath, incoming_tweets):
         f"🎉 目前推文資料庫總數: {len(merged_list)} 則 (檔案大小: {file_size_kb:.1f} KB)"
     )
 
-    if merged_list:
-        latest = merged_list[0]
-        oldest = merged_list[-1]
-        log(f"🔝 最新推文: {latest.get('created_at')} (ID: {latest.get('id')})")
-        log(f"🔚 最舊推文: {oldest.get('created_at')} (ID: {oldest.get('id')})")
-
 if __name__ == "__main__":
-    log(f"🚀 開始執行 @{TARGET_HANDLE} 自適應推文擷取與同步任務...")
+    log(f"🚀 開始執行 @{TARGET_HANDLE} 推文擷取與同步任務...")
 
-    # 1. 讀取現有資料庫 ID 集合
     existing_tweets = load_existing_tweets(TWEETS_FILE)
     existing_ids = {str(t.get("id", "")).strip() for t in existing_tweets if t.get("id")}
 
-    # 2. 取得 User ID 與最新串流推文
     user_id, latest_tweets = get_user_id_and_initial_tweets(TARGET_HANDLE)
     log(f"🆔 成功取得 @{TARGET_HANDLE} 之 Twitter User ID: {user_id}")
 
-    # 3. 啟動 GraphQL 深度挖掘（支援遇重複早停機制）
     history_tweets = fetch_history_via_graphql(user_id, TARGET_HANDLE, existing_ids, max_pages=MAX_PAGES_TO_FETCH)
 
-    # 4. 合併並寫入資料庫
     all_incoming = latest_tweets + history_tweets
     save_merged_tweets(TWEETS_FILE, all_incoming)
     log("✅ 任務全部完成。")
