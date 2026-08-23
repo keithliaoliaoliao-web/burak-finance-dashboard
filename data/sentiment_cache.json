@@ -1523,5 +1523,100 @@
     "sentiment": "Bullish",
     "summary": "看好AI需求帶動晶片與電力股",
     "translation_zh": "Grok Bot 看好 AI 概念股。\n\n更多的 AI 使用量 = 更多的算力需求。\n\n更多的算力需求 = 更多的晶片、資料中心與電力。\n\n$NVDA $AMD $MU $CRDO $NBIS $IREN $BE $VST"
+  },
+  "2083436099779621315": {
+    "sentiment": "Neutral",
+    "summary": "列出目前賣空比例最高美股",
+    "translation_zh": "目前賣空比例最高的股票：\n• $HTZ 56%\n• $SPCE 41%\n• $SOUN 38%\n• $LCID 37%\n• $AI 37%\n• $FLNC 34%\n• $RXRX 34%\n• $SERV 33%\n• $UPST 31%\n• $RUN 30%\n• $EOSE 28%\n• $WULF 26%"
+  },
+  "2082033962524819653": {
+    "sentiment": "Bullish",
+    "summary": "AI浪潮未結束資本支出大增",
+    "translation_zh": "AI 交易結束了？！\n\n• 超大型雲端業者（Hyperscalers）正將 2026 年資本支出擴增至 6,600 億至 7,300 億美元，幾乎是去年的兩倍。\n• 來自 $MU、$SKHY、三星的 HBM 記憶體到 2026 年已完全售罄。\n• $NBIS 賣光了每一單位產能。營收年增 684%，並指引年化營收達到 70 億至 90 億美元。\n• $NVDA 才剛..."
+  },
+  "2081902708404207645": {
+    "sentiment": "Bullish",
+    "summary": "看好 Nebius 成為算力平台",
+    "translation_zh": "$NBIS 大多數人看到 Kimi K3 便擔心會有更便宜的模型。\n\n今天 Nebius Token Factory 成為了 Kimi K3 的官方 Day 0 合作夥伴。\n\n當世界上最好的開源模型需要更多算力時，它不會選擇封閉式 API，而是選擇能真正提供服務的平台。"
+  },
+  "2081873516069114068": {
+    "sentiment": "Bullish",
+    "summary": "看好巨頭資本支出帶動行情",
+    "translation_zh": "超大型雲端業者的資本支出預計將達到約 1.4 兆美元：\n\n$GOOGL 約 3,600 億美元\n$MSFT 約 3,500 億美元\n$AMZN 約 3,300 億美元\n$META 約 2,500 億美元\n$SPCX 約 1,100 億美元\n\n我的投資組合已對此做好佈局。"
+  },
+  "2081859171570565348": {
+    "sentiment": "Bullish",
+    "summary": "看好 Reddit 具翻倍上漲潛力",
+    "translation_zh": "$RDDT 是我目前在市場上看到最容易實現 2 倍報酬的機會之一。"
+  },
+  "2081840548772717009": {
+    "sentiment": "Bullish",
+    "summary": "看好股價逢均線支撐有望反彈",
+    "translation_zh": "$WYFI 的賣空股數剛達到 583 萬股，佔流通股的 52%。當股價停留在 200 日均線附近時，空頭在此表現相當積極。"
+  },
+  "2081817144879349893": {
+    "sentiment": "Bullish",
+    "summary": "看好 Nebius 居 AI 基礎設施王者",
+    "translation_zh": "$NBIS 對我來說依然是 AI 基礎設施之王。\n\n軟體。推理。平台。客戶多元化。全棧能力。\n\n其他標的也不是死錢：\n$CRWV 仍擁有最大的已簽約在手訂單。\n$IREN 擁有真實電力資源且已有上線的 AI 雲端合約。\n$WULF 和 $CIFR 則..."
+  },
+  "2081782175821652365": {
+    "sentiment": "Bullish",
+    "summary": "認為利空消息往往出現在底部",
+    "translation_zh": "$SNDK 在摩根士丹利警告記憶體價格可能於 2026 年底見頂後下跌。\n\n這種恐慌利空新聞通常會出現在底部附近。"
+  },
+  "2081748947056665052": {
+    "sentiment": "Bullish",
+    "summary": "聰明錢大舉加碼國防科技股",
+    "translation_zh": "$ONDS \n258 家機構加碼。\n114 家減碼。\n\n聰明錢正在大量建倉這家國防科技公司。"
+  },
+  "2081704905216344099": {
+    "sentiment": "Bullish",
+    "summary": "看好重演特斯拉上市後暴漲",
+    "translation_zh": "$SPCX 上市後的首次財報將於 8 月 4 日公布。\n\n閉鎖期解禁將在兩天後開始。\n\n股價已較 IPO 後的高點下跌近 50%。\n\n這與特斯拉 2010 年的走勢模式相同：\n\nIPO 後大幅下跌，隨後在接下來的幾年中大漲超過 2,500%。"
+  },
+  "2081644506999664754": {
+    "sentiment": "Neutral",
+    "summary": "等待200EMA支撐確認反彈再買入",
+    "translation_zh": "很多人問我是否買回了 $SIVE。簡短回答：還沒有。目前價格剛好落在 31.3 瑞典克朗的 200EMA 均線上。我想看到這裡出現真正的反彈。如果發生這種情況且趨勢真正反轉，我會買回來。"
+  },
+  "2081500558863773974": {
+    "sentiment": "Bullish",
+    "summary": "比特幣週線RSI觸及30，暗示底部將近",
+    "translation_zh": "每次比特幣 $BTC 的週線 RSI 觸及 30 區間時，底部就已經不遠了。第一個圓圈：2019年。第二個圓圈：2022年。第三個圓圈：正在形成中。目前價格：$64,650"
+  },
+  "2081462055555477553": {
+    "sentiment": "Neutral",
+    "summary": "各主要美股與加密貨幣低於歷史高點幅度",
+    "translation_zh": "低於歷史高點的百分比：\n$AAPL: 0%\n$SPY: -3%\n$AMD: -10%\n$NVDA: -12%\n$AMZN: -16%\n$AVGO: -18%\n$GOOGL: -22%\n$MU: -24%\n$META: -24%\n$MSFT: -29%\n$NBIS: -34%\n$TSLA: -36%\n$PLTR: -41%\n$WYFI: -47%\n$BTC: -49%\n$IREN: -52%\n$SNDK: -55%\n$ASTS: -58%\n$RKLB: -57%\n$MSTR: -83%"
+  },
+  "2081401657624072552": {
+    "sentiment": "Bullish",
+    "summary": "NBIS市值與合約積壓相當，並不昂貴",
+    "translation_zh": "我一直聽到同一句話。$NBIS 太貴了。市值約 50 億美元。已簽約的積壓訂單也約為 50 億美元。幾乎是一比一。這根本不貴。"
+  },
+  "2081333961003798918": {
+    "sentiment": "Bullish",
+    "summary": "散戶恐慌，聰明錢正大舉買進CRDO",
+    "translation_zh": "散戶在恐慌。聰明錢正在累積 $CRDO"
+  },
+  "2081274181665136726": {
+    "sentiment": "Neutral",
+    "summary": "關注下週財報與科技巨頭資本支出動能",
+    "translation_zh": "我下週關注的財報：$MSFT 和 $META 將在週三發布財報。Google 剛剛將 2026 年資本支出提高到 1950-2050 億美元。我們需要這兩家公司展現相同的氣勢，高額支出必須持續下去。$SOFI 和 $HOOD 都處於難看的跌幅中，這些金融科技股一直在流血。"
+  },
+  "2081017878493405411": {
+    "sentiment": "Bullish",
+    "summary": "公佈個人前五大AI與太空等核心持股",
+    "translation_zh": "🚨 我目前的總持股前五名：\n$NBIS — AI 基礎設施之王\n$RKLB — 端到端太空執行力\n$AAOI — 受惠 AI 需求的光學股\n$ASTS — 巨大的長期電信顛覆潛力\n$ONDS — 無人機防禦與自主領導者\n我總共有 24 個持倉，完整投資組合在 https://t.co/56tjyWXRz7"
+  },
+  "2080961948334592435": {
+    "sentiment": "Bullish",
+    "summary": "盤點華爾街對熱門股最具潛力的目標價",
+    "translation_zh": "華爾街對熱門股票最看多的目標價\n太空\n• $RKLB $150 (+135%)\n• $ASTS $115 (+105%)\n• $PL $53 (+159%)\n• $LUNR $75 (+474%)\n量子\n• $IONQ $100 (+204%)\n• $RGTI $40 (+183%)\n• $QBTS $45 (+176%)\n• $QUBT $30 (+304%)\n無人機\n• $AVAV $326 (+71%)\n• $KTOS"
+  },
+  "2080759424994492838": {
+    "sentiment": "Bullish",
+    "summary": "ASTS潛在市場龐大，市值差距即是機會",
+    "translation_zh": "$ASTS 潛在市場總額 (TAM)：1.1 兆美元（全球行動無線市場）。目前市值：約 220 億美元。差距就是機會。"
   }
 }
