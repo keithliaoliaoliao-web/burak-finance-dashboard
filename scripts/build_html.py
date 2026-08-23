@@ -7,7 +7,7 @@ import yfinance as yf
 # ==========================================
 # 參數設定區 (Burak Finance 專屬)
 # ==========================================
-TARGET_HANDLE = os.environ.get("TARGET_HANDLE", "burak_finance")
+TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 CACHE_FILE = "data/sentiment_cache.json"
 OUTPUT_HTML = "docs/index.html"
@@ -64,8 +64,6 @@ def resolve_sector(ticker, yf_info=None):
             
     if yf_info and isinstance(yf_info, dict):
         ind = str(yf_info.get("industry", "")).lower()
-        sec = str(yf_info.get("sector", "")).lower()
-
         if any(w in ind for w in ["biotechnology", "drug", "pharmaceutical", "healthcare", "medical"]):
             return "生技與醫療製藥"
         if any(w in ind for w in ["semiconductor equipment", "semiconductor - equipment", "packaging"]):
@@ -403,7 +401,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white">
 
-  <!-- 頂部導航 -->
+  <!-- 頂部導航 (Burak 亮橘金品牌設計) -->
   <header class="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -659,7 +657,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 浮動 AI 對話助理按鈕與對話面板 -->
+  <!-- 浮動 AI 對話助理按鈕與對話面板 (Burak 橘金設計) -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -1598,7 +1596,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (全標的智慧板塊分類已就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (獨立乾淨版本)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
