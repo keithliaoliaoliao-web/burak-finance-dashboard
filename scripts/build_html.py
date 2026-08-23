@@ -14,7 +14,6 @@ OUTPUT_HTML = "docs/index.html"
 
 TWITTER_EPOCH = 1288834974657
 
-# 美股 9 大核心產業板塊對應字典
 SECTOR_MAPPING = {
     "生技與醫療製藥": [
         "HIMS", "MRNA", "JNJ", "TEM", "LLY", "NVO", "ISRG", "CRSP", "VRTX", "AMGN", 
@@ -57,15 +56,11 @@ SECTOR_MAPPING = {
 }
 
 def resolve_sector(ticker, yf_info=None):
-    """【雙層分類器】：結合靜態字典與 Yahoo Finance 英文產業語意自動轉譯"""
-    sym = ticker.upper().strip()
-    
-    # 1. 優先比對靜態精準清單
+    sym = str(ticker).upper().strip()
     for sector_name, symbols in SECTOR_MAPPING.items():
         if sym in symbols:
             return sector_name
             
-    # 2. 第二層：利用 yfinance 的 sector 與 industry 進行語意分析
     if yf_info and isinstance(yf_info, dict):
         ind = str(yf_info.get("industry", "")).lower()
         sec = str(yf_info.get("sector", "")).lower()
@@ -90,7 +85,6 @@ def resolve_sector(ticker, yf_info=None):
     return "其他科技 / 綜合"
 
 def snowflake_to_iso(tweet_id_str):
-    """利用 Twitter Snowflake 演算法計算 UTC 發布時間"""
     try:
         t_id = int(str(tweet_id_str).strip())
         timestamp_ms = (t_id >> 22) + TWITTER_EPOCH
@@ -139,10 +133,9 @@ def load_cache(filepath):
         return []
 
 def extract_tickers(text):
-    """萃取推文中的美股代號"""
     if not text:
         return []
-    matches = re.findall(r"(?<!\w)\$([A-Za-z]{1,6})\b", text)
+    matches = re.findall(r"(?<!\w)\$([A-Za-z]{1,6})\b", str(text))
     blacklist = {
         "USD", "USDT", "BTC", "ETH", "CAD", "EUR", "ATH", "CEO", "CFO", "CTO",
         "AI", "FOMC", "FED", "CPI", "PPI", "GDP", "DD", "EOD", "YOLO", "NEW",
@@ -171,7 +164,6 @@ def extract_tweet_text(item):
     return ""
 
 def parse_date(item, tweet_id=""):
-    """解析推文發布時間"""
     if tweet_id and tweet_id.isdigit() and len(tweet_id) >= 10:
         d_str, m_str, iso_str = snowflake_to_iso(tweet_id)
         if d_str:
@@ -203,7 +195,6 @@ def parse_date(item, tweet_id=""):
     return s, "未知月份", s
 
 def extract_metrics(item):
-    """解析按讚、轉推與瀏覽量"""
     likes, retweets, views = 0, 0, 0
     containers = [item]
     for sub in ["public_metrics", "metrics", "stats", "legacy"]:
@@ -280,7 +271,7 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
         is_analyzed = False
 
         if ai_data and isinstance(ai_data, dict):
-            raw_sent = ai_data.get("sentiment", "Neutral")
+            raw_sent = str(ai_data.get("sentiment", "Neutral"))
             if any(w in raw_sent for w in ["Bull", "多"]):
                 sentiment = "Bullish"
             elif any(w in raw_sent for w in ["Bear", "空"]):
@@ -288,8 +279,8 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
             else:
                 sentiment = "Neutral"
 
-            summary = ai_data.get("summary", "") or ai_data.get("summary_zh", "")
-            translation_zh = ai_data.get("translation_zh", "") or ai_data.get("chinese", "")
+            summary = str(ai_data.get("summary") or ai_data.get("summary_zh") or "")
+            translation_zh = str(ai_data.get("translation_zh") or ai_data.get("chinese") or "")
             is_analyzed = bool(summary or translation_zh)
 
         url = item.get("url") or item.get("permanentUrl") or item.get("link")
@@ -298,26 +289,25 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
 
         cleaned.append({
             "id": tweet_id,
-            "text": text,
-            "date": date_str,
-            "month": month_str,
-            "iso_date": iso_date,
-            "tickers": tickers,
-            "likes": likes,
-            "retweets": retweets,
-            "views": views,
+            "text": str(text),
+            "date": str(date_str),
+            "month": str(month_str),
+            "iso_date": str(iso_date or ""),
+            "tickers": tickers if isinstance(tickers, list) else [],
+            "likes": int(likes),
+            "retweets": int(retweets),
+            "views": int(views),
             "sentiment": sentiment,
             "summary": summary,
             "translation_zh": translation_zh,
             "is_analyzed": is_analyzed,
-            "url": url or "#"
+            "url": str(url or "#")
         })
 
     cleaned.sort(key=lambda x: str(x.get("iso_date") or x.get("date") or ""), reverse=True)
     return cleaned, ticker_counts, recent_tickers
 
 def fetch_stock_quotes_and_fundamentals(tickers):
-    """獲取美股市場行情與基本面數據，並使用雙層分類引擎確認產業板塊"""
     print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情與智慧產業板塊分類...", flush=True)
     quotes = {}
     
@@ -412,7 +402,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white">
 
-  <!-- 頂部導航 (Burak 亮橘金品牌設計) -->
+  <!-- 頂部導航 -->
   <header class="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -668,7 +658,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 浮動 AI 對話助理按鈕與對話面板 (Burak 橘金設計) -->
+  <!-- 浮動 AI 對話助理按鈕與對話面板 -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -752,10 +742,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
 
   <script>
-    const allTweets = __TWEETS_DATA__;
-    const initialTopTickers = __TOP_TICKERS__;
-    const stockQuotes = __STOCK_QUOTES__;
-    const sectorMapping = __SECTOR_MAPPING__;
+    const allTweets = __TWEETS_DATA__ || [];
+    const initialTopTickers = __TOP_TICKERS__ || [];
+    const stockQuotes = __STOCK_QUOTES__ || {};
+    const sectorMapping = __SECTOR_MAPPING__ || {};
 
     let currentViewMode = 'all';
     let currentSentiment = 'ALL';
@@ -769,37 +759,43 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     let sentimentChartVisible = false;
     let sentimentChartInstance = null;
 
-    let watchlist = JSON.parse(localStorage.getItem('burak_watchlist') || '[]');
-    let clientTranslations = JSON.parse(localStorage.getItem('burak_trans_cache') || '{}');
+    let watchlist = [];
+    let clientTranslations = {};
+    try {
+      watchlist = JSON.parse(localStorage.getItem('burak_watchlist') || '[]');
+      clientTranslations = JSON.parse(localStorage.getItem('burak_trans_cache') || '{}');
+    } catch(e) {}
 
     function formatNumber(num) {
-      if (!num) return '-';
+      if (!num && num !== 0) return '-';
       if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
       if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
       if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
       if (num >= 1e3) return (num / 1e3).toFixed(1) + 'K';
-      return num.toLocaleString();
+      return Number(num).toLocaleString();
     }
 
     function toggleWatchlist(ticker, event) {
       if (event) event.stopPropagation();
-      ticker = ticker.toUpperCase();
+      if (!ticker) return;
+      ticker = String(ticker).toUpperCase();
       const idx = watchlist.indexOf(ticker);
       if (idx >= 0) {
         watchlist.splice(idx, 1);
       } else {
         watchlist.push(ticker);
       }
-      localStorage.setItem('burak_watchlist', JSON.stringify(watchlist));
+      try { localStorage.setItem('burak_watchlist', JSON.stringify(watchlist)); } catch(e) {}
       updateAggregatedView();
     }
 
     function isWatchlisted(ticker) {
-      return watchlist.includes(ticker.toUpperCase());
+      return Boolean(ticker && watchlist.includes(String(ticker).toUpperCase()));
     }
 
-    // 【核心修復】：嚴格驗證該股票是否屬於當前所選板塊
     function isTickerInCurrentSector(sym) {
+      if (!sym) return false;
+      sym = String(sym).toUpperCase();
       if (currentSector === 'ALL') return true;
       if (currentSector === 'WATCHLIST') return isWatchlisted(sym);
       
@@ -811,7 +807,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function highlightText(text) {
       if (!text) return '';
-      return text
+      return String(text)
         .replace(/(\$[A-Za-z]{1,6})/g, '<button onclick="filterByTicker(\'$1\'.replace(\'$\', \'\').toUpperCase())" class="font-bold text-amber-400 bg-amber-950/60 hover:bg-amber-900/80 px-1 py-0.5 rounded border border-amber-500/30 transition inline-block">$1</button>')
         .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline break-all">$1</a>');
     }
@@ -841,11 +837,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function getFilteredByView(tweetsList) {
+      if (!Array.isArray(tweetsList)) return [];
       let filtered = tweetsList;
       if (currentViewMode !== 'all') {
         const now = new Date();
         filtered = filtered.filter(t => {
-          if (!t.iso_date) return true;
+          if (!t || !t.iso_date) return true;
           const d = new Date(t.iso_date);
           const diffDays = (now - d) / (1000 * 60 * 60 * 24);
           if (currentViewMode === 'daily') return diffDays <= 1.5;
@@ -857,10 +854,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       }
 
       if (currentSector === 'WATCHLIST') {
-        filtered = filtered.filter(t => t.tickers.some(sym => isWatchlisted(sym)));
+        filtered = filtered.filter(t => (t.tickers || []).some(sym => isWatchlisted(sym)));
       } else if (currentSector !== 'ALL') {
         const sectorTickers = sectorMapping[currentSector] || [];
-        filtered = filtered.filter(t => t.tickers.some(sym => sectorTickers.includes(sym) || (stockQuotes[sym] && stockQuotes[sym].sector === currentSector)));
+        filtered = filtered.filter(t => (t.tickers || []).some(sym => sectorTickers.includes(sym) || (stockQuotes[sym] && stockQuotes[sym].sector === currentSector)));
       }
 
       return filtered;
@@ -873,7 +870,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const recencyScores = {};
 
       viewTweets.forEach((t, index) => {
-        t.tickers.forEach(sym => {
+        if (!t) return;
+        (t.tickers || []).forEach(sym => {
           counts[sym] = (counts[sym] || 0) + 1;
           if (!recencyScores[sym]) {
             recencyScores[sym] = Math.max(1, 100 - index);
@@ -881,7 +879,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         });
       });
 
-      // 【核心修復】：在按鈕排序前加入 isTickerInCurrentSector 過濾
       const topTickers = Object.keys(counts)
         .filter(isTickerInCurrentSector)
         .sort((a, b) => {
@@ -895,9 +892,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .map(sym => [sym, counts[sym]]);
 
       const total = viewTweets.length;
-      const bullish = viewTweets.filter(t => t.sentiment === 'Bullish').length;
-      const bearish = viewTweets.filter(t => t.sentiment === 'Bearish').length;
-      const analyzed = viewTweets.filter(t => t.is_analyzed).length;
+      const bullish = viewTweets.filter(t => t && t.sentiment === 'Bullish').length;
+      const bearish = viewTweets.filter(t => t && t.sentiment === 'Bearish').length;
+      const analyzed = viewTweets.filter(t => t && t.is_analyzed).length;
       const uniqueTickers = topTickers.length;
       const coveragePct = total ? Math.round((analyzed / total) * 100) : 0;
 
@@ -918,7 +915,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function renderTopTickers(tickersList) {
       const bar = document.getElementById('top-tickers-bar');
-      if (tickersList.length === 0) {
+      if (!tickersList || tickersList.length === 0) {
         bar.innerHTML = '<span class="text-xs text-slate-500">該板塊下無符合的推文標的</span>';
         return;
       }
@@ -926,7 +923,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const quote = stockQuotes[t];
         const starred = isWatchlisted(t);
         let miniBadge = '';
-        if (quote && quote.changePct !== undefined) {
+        if (quote && quote.changePct !== undefined && quote.changePct !== null) {
           const isPos = quote.changePct >= 0;
           miniBadge = `<span class="text-[10px] ml-1 ${isPos ? 'text-emerald-400' : 'text-rose-400'}">${isPos ? '+' : ''}${quote.changePct.toFixed(1)}%</span>`;
         }
@@ -959,7 +956,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function renderSentimentChart(ticker) {
       if (!ticker) return;
-      const tickerTweets = allTweets.filter(t => t.tickers.includes(ticker) && t.month && t.month !== '未知月份');
+      const tickerTweets = allTweets.filter(t => t && (t.tickers || []).includes(ticker) && t.month && t.month !== '未知月份');
       
       const monthsMap = {};
       tickerTweets.forEach(t => {
@@ -1144,8 +1141,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const dataA = stockQuotes[symA] || {};
       const dataB = stockQuotes[symB] || {};
 
-      const tweetsA = allTweets.filter(t => t.tickers.includes(symA));
-      const tweetsB = allTweets.filter(t => t.tickers.includes(symB));
+      const tweetsA = allTweets.filter(t => t && (t.tickers || []).includes(symA));
+      const tweetsB = allTweets.filter(t => t && (t.tickers || []).includes(symB));
 
       const bullA = tweetsA.filter(t => t.sentiment === 'Bullish').length;
       const bullB = tweetsB.filter(t => t.sentiment === 'Bullish').length;
@@ -1153,7 +1150,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const rows = [
         ['所屬板塊', dataA.sector || '-', dataB.sector || '-'],
         ['即時股價', dataA.price ? `$${dataA.price}` : '-', dataB.price ? `$${dataB.price}` : '-'],
-        ['單日漲跌幅', dataA.changePct ? `${dataA.changePct > 0 ? '+' : ''}${dataA.changePct}%` : '-', dataB.changePct ? `${dataB.changePct > 0 ? '+' : ''}${dataB.changePct}%` : '-'],
+        ['單日漲跌幅', dataA.changePct !== undefined && dataA.changePct !== null ? `${dataA.changePct > 0 ? '+' : ''}${dataA.changePct}%` : '-', dataB.changePct !== undefined && dataB.changePct !== null ? `${dataB.changePct > 0 ? '+' : ''}${dataB.changePct}%` : '-'],
         ['社群提及總數', `${tweetsA.length} 則`, `${tweetsB.length} 則`],
         ['看多偏向度 (Bullish %)', `${tweetsA.length ? Math.round(bullA/tweetsA.length*100) : 0}% (${bullA}多)`, `${tweetsB.length ? Math.round(bullB/tweetsB.length*100) : 0}% (${bullB}多)`],
         ['市值 (Market Cap)', formatNumber(dataA.marketCap), formatNumber(dataB.marketCap)],
@@ -1176,22 +1173,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     function openDeepDiveModal(ticker) {
       if (!ticker) return;
       const modal = document.getElementById('deepdive-modal');
-      const tickerTweets = allTweets.filter(t => t.tickers.includes(ticker));
+      const tickerTweets = allTweets.filter(t => t && (t.tickers || []).includes(ticker));
       
       document.getElementById('modal-ticker-title').innerText = `$${ticker}`;
       if (tickerTweets.length === 0) return;
 
-      const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
+      const chronological = [...tickerTweets].sort((a, b) => String(a.iso_date || a.date).localeCompare(String(b.iso_date || b.date)));
       const firstMention = chronological[0];
       const latestMention = chronological[chronological.length - 1];
 
-      document.getElementById('modal-first-date').innerText = firstMention.date;
+      document.getElementById('modal-first-date').innerText = firstMention ? firstMention.date : '-';
       document.getElementById('modal-mention-count').innerText = `${tickerTweets.length} 則 (${tickerTweets.filter(t=>t.is_analyzed).length} 則已分析)`;
-      document.getElementById('modal-latest-stance').innerText = latestMention.sentiment === 'Bullish' ? '看多 (Bullish)' : (latestMention.sentiment === 'Bearish' ? '看空 (Bearish)' : '中立 (Neutral)');
+      document.getElementById('modal-latest-stance').innerText = latestMention ? (latestMention.sentiment === 'Bullish' ? '看多 (Bullish)' : (latestMention.sentiment === 'Bearish' ? '看空 (Bearish)' : '中立 (Neutral)')) : '-';
 
       const keyPoints = [...tickerTweets]
-        .filter(t => t.summary)
-        .sort((a, b) => (b.views + b.likes * 10) - (a.views + a.likes * 10))
+        .filter(t => t && t.summary)
+        .sort((a, b) => ((b.views || 0) + (b.likes || 0) * 10) - ((a.views || 0) + (a.likes || 0) * 10))
         .slice(0, 3);
 
       const keyContainer = document.getElementById('modal-key-points');
@@ -1243,9 +1240,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function filterByTicker(ticker) {
-      currentTicker = ticker.toUpperCase();
+      if (!ticker) {
+        currentTicker = '';
+      } else {
+        currentTicker = String(ticker).toUpperCase();
+      }
       displayLimit = 25;
-      document.getElementById('clear-ticker-btn').classList.toggle('hidden', !ticker);
+      document.getElementById('clear-ticker-btn').classList.toggle('hidden', !currentTicker);
       updateAggregatedView();
     }
 
@@ -1278,7 +1279,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const item = allTweets[idx];
       if (!transEl || !item) return;
 
-      const rawText = item.text;
+      const rawText = item.text || '';
       if (clientTranslations[rawText]) {
         transEl.innerHTML = highlightText(clientTranslations[rawText]);
         transEl.classList.remove('hidden');
@@ -1293,7 +1294,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const json = await res.json();
         const translated = json[0].map(row => row[0]).join('');
         clientTranslations[rawText] = translated;
-        localStorage.setItem('burak_trans_cache', JSON.stringify(clientTranslations));
+        try { localStorage.setItem('burak_trans_cache', JSON.stringify(clientTranslations)); } catch(e) {}
         transEl.innerHTML = highlightText(translated);
         transEl.classList.remove('hidden');
         if (btnEl) btnEl.remove();
@@ -1308,21 +1309,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const viewFiltered = getFilteredByView(allTweets);
 
       let filtered = viewFiltered.filter(t => {
+        if (!t) return false;
         const matchSentiment = currentSentiment === 'ALL' || t.sentiment === currentSentiment;
-        const matchTicker = !currentTicker || t.tickers.includes(currentTicker);
+        const matchTicker = !currentTicker || (t.tickers || []).includes(currentTicker);
         const matchSearch = !searchQuery || 
-          t.text.toLowerCase().includes(searchQuery) || 
-          t.summary.toLowerCase().includes(searchQuery) ||
-          t.tickers.some(tick => tick.toLowerCase().includes(searchQuery));
+          (t.text && String(t.text).toLowerCase().includes(searchQuery)) || 
+          (t.summary && String(t.summary).toLowerCase().includes(searchQuery)) ||
+          (t.tickers && t.tickers.some(tick => String(tick).toLowerCase().includes(searchQuery)));
         return matchSentiment && matchTicker && matchSearch;
       });
 
       if (currentSort === 'likes_desc') {
-        filtered.sort((a, b) => b.likes - a.likes);
+        filtered.sort((a, b) => (b.likes || 0) - (a.likes || 0));
       } else if (currentSort === 'views_desc') {
-        filtered.sort((a, b) => b.views - a.views);
+        filtered.sort((a, b) => (b.views || 0) - (a.views || 0));
       } else {
-        filtered.sort((a, b) => (b.iso_date || b.date).localeCompare(a.iso_date || a.date));
+        filtered.sort((a, b) => String(b.iso_date || b.date).localeCompare(String(a.iso_date || a.date)));
       }
 
       const totalFiltered = filtered.length;
@@ -1383,7 +1385,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
               <div class="flex items-center gap-2">
                 ${sentimentBadge}
                 <div class="flex flex-wrap gap-1">
-                  ${item.tickers.map(tk => `<button onclick="filterByTicker('${tk}')" class="text-xs font-mono font-bold text-amber-400 bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 transition">\\$${tk}</button>`).join('')}
+                  ${(item.tickers || []).map(tk => `<button onclick="filterByTicker('${tk}')" class="text-xs font-mono font-bold text-amber-400 bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-700 transition">\\$${tk}</button>`).join('')}
                 </div>
               </div>
               <div class="text-xs text-slate-500 font-mono">${item.date}</div>
@@ -1393,9 +1395,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
             <div class="flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-2.5">
               <div class="flex items-center gap-4 font-mono">
-                <span>❤️ ${item.likes.toLocaleString()}</span>
-                <span>🔁 ${item.retweets.toLocaleString()}</span>
-                <span>👁️ ${item.views.toLocaleString()}</span>
+                <span>❤️ ${(item.likes || 0).toLocaleString()}</span>
+                <span>🔁 ${(item.retweets || 0).toLocaleString()}</span>
+                <span>👁️ ${(item.views || 0).toLocaleString()}</span>
               </div>
               <a href="${item.url}" target="_blank" rel="noopener noreferrer" class="text-slate-400 hover:text-white transition flex items-center gap-1">
                 開啟推文 ↗
@@ -1406,7 +1408,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       }).join('');
     }
 
-    // AI 對話抽屜邏輯與意圖解析引擎
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -1451,7 +1452,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const bullish = viewTweets.filter(t => t.sentiment === 'Bullish').length;
         const total = viewTweets.length;
         const counts = {};
-        viewTweets.forEach(t => t.tickers.forEach(sym => counts[sym] = (counts[sym] || 0) + 1));
+        viewTweets.forEach(t => (t.tickers || []).forEach(sym => counts[sym] = (counts[sym] || 0) + 1));
         const topSymbols = Object.keys(counts).filter(isTickerInCurrentSector).slice(0, 5).join(', ');
 
         appendChatMessage('ai', `
@@ -1478,7 +1479,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       if (q.includes('偏多') || q.includes('看多') || q.includes('BULLISH')) {
         const counts = {};
         allTweets.forEach(t => {
-          t.tickers.forEach(sym => {
+          (t.tickers || []).forEach(sym => {
             if (!counts[sym]) counts[sym] = { bullish: 0, bearish: 0, total: 0 };
             if (t.sentiment === 'Bullish') counts[sym].bullish++;
             if (t.sentiment === 'Bearish') counts[sym].bearish++;
@@ -1506,9 +1507,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
       if (symbol) {
         filterByTicker(symbol);
-        const tickerTweets = allTweets.filter(t => t.tickers.includes(symbol));
+        const tickerTweets = allTweets.filter(t => t && (t.tickers || []).includes(symbol));
         if (tickerTweets.length > 0) {
-          const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
+          const chronological = [...tickerTweets].sort((a, b) => String(a.iso_date || a.date).localeCompare(String(b.iso_date || b.date)));
           const first = chronological[0];
           const latest = chronological[chronological.length - 1];
           const qData = stockQuotes[symbol] || {};
@@ -1596,7 +1597,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (亮橘金主題、純淨化板塊過濾與估值卡已全部就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (防禦性架構已全面注入)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
