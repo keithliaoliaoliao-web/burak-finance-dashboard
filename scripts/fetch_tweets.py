@@ -9,11 +9,17 @@ from datetime import datetime
 # ==========================================
 # 參數設定區 (Burak Finance 專案)
 # ==========================================
-TARGET_HANDLE = "burak_finance"
+TARGET_HANDLE = os.environ.get("TARGET_HANDLE", "burak_finance")
 TWEETS_FILE = "data/tweets.json"
 
-# 向下深度翻頁上限 (每次向下探測 12 頁)
-MAX_PAGES_TO_FETCH = 12
+# 已知的作者官方 Twitter User ID (避免快照被擋時遺失 ID)
+KNOWN_USER_IDS = {
+    "burak_finance": "371876593",
+    "aleabitoreddit": "1517409204968361985"
+}
+
+# 向下深度翻頁上限 (每次向下探測 15 頁，確保歷史推文完整回填)
+MAX_PAGES_TO_FETCH = 15
 
 AUTH_TOKEN = os.environ.get("TWITTER_AUTH_TOKEN", "").strip()
 CT0 = os.environ.get("TWITTER_CT0", "").strip()
@@ -76,7 +82,7 @@ def get_user_id_and_initial_tweets(screen_name):
         headers["x-csrf-token"] = CT0
         log("🔑 官方認證憑證 (Cookies) 注入成功。")
 
-    user_id = None
+    user_id = KNOWN_USER_IDS.get(screen_name, "371876593")
     tweets = []
 
     try:
@@ -93,7 +99,7 @@ def get_user_id_and_initial_tweets(screen_name):
                     if not tw:
                         continue
 
-                    if not user_id and tw.get("user", {}).get("id_str"):
+                    if tw.get("user", {}).get("id_str"):
                         user_id = str(tw["user"]["id_str"]).strip()
 
                     tweet_id = str(tw.get("id_str") or tw.get("id", "")).strip()
@@ -116,13 +122,16 @@ def get_user_id_and_initial_tweets(screen_name):
                             "url": f"https://twitter.com/{screen_name}/status/{tweet_id}"
                         })
     except Exception as e:
-        log(f"⚠️ 初始化串流抓取異常: {e}")
+        log(f"ℹ️ 快照串流提示 (已自動啟用官方 User ID 備援): {e}")
 
     return user_id, tweets
 
-def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=12):
-    if not user_id or not AUTH_TOKEN or not CT0:
-        log("⚠️ 未具備完整認證 Cookie 或 User ID，跳過 GraphQL 歷史回填。")
+def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=15):
+    if not user_id:
+        user_id = KNOWN_USER_IDS.get(screen_name, "371876593")
+
+    if not AUTH_TOKEN or not CT0:
+        log("⚠️ 未在 GitHub Secrets 偵測到 TWITTER_AUTH_TOKEN 或 CT0，將使用公開串流。")
         return []
 
     headers = {
@@ -131,7 +140,7 @@ def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=
         "x-csrf-token": CT0,
         "x-twitter-active-user": "yes",
         "x-twitter-auth-type": "OAuth2Session",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Content-Type": "application/json"
     }
 
@@ -146,11 +155,11 @@ def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=
     cursor = None
     seen_ids = set()
 
-    log(f"🚀 [歷史探索啟動] 開始透過 GraphQL 檢索 @{screen_name} (上限 {max_pages} 頁)...")
+    log(f"🚀 [歷史探索啟動] 透過 GraphQL 深度挖掘 @{screen_name} (目標 ID: {user_id}，上限 {max_pages} 頁)...")
 
     for page in range(1, max_pages + 1):
         variables = {
-            "userId": user_id,
+            "userId": str(user_id),
             "count": 20,
             "includePromotedContent": False,
             "withQuickPromoteEligibilityTweetFields": True,
@@ -215,7 +224,7 @@ def fetch_history_via_graphql(user_id, screen_name, existing_ids_set, max_pages=
                 continue
 
         if not success or not page_tweets:
-            log(f"  ℹ️ 已到達歷史推文邊界，於第 {page} 頁結束。")
+            log(f"  ℹ️ 已到達歷史推文邊界，於第 {page} 頁完成檢索。")
             break
 
         all_history.extend(page_tweets)
@@ -237,7 +246,7 @@ def enrich_recent_metrics(tweets_list, target_count=35):
     }
     updated = 0
     check_limit = min(len(tweets_list), target_count)
-    log(f"🔄 正在為最新 {check_limit} 則推文連線同步即時互動數據...")
+    log(f"🔄 正在為最新 {check_limit} 則推文連線同步即時互動數據 (❤️ / 🔁 / 👁️)...")
 
     for tw in tweets_list[:check_limit]:
         t_id = str(tw.get("id", "")).strip()
@@ -301,9 +310,9 @@ def save_merged_tweets(filepath, incoming_tweets):
 
     merged_list = list(tweets_map.values())
 
-    # 【防清空安全鎖】：若合併結果為空，且本地原本有資料，絕對不執行覆蓋！
+    # 【防清空安全鎖】：若合併結果為空且本地原有推文，絕對不寫入空陣列
     if len(merged_list) == 0 and len(existing_tweets) > 0:
-        log("🛑 [觸發安全熔斷] 本次未抓到推文且合併清單為空，保留原有資料庫，避免清空！")
+        log("🛑 [安全保護生效] 合併清單為空，保留原有資料庫，避免清空！")
         return
 
     merged_list.sort(
@@ -311,7 +320,8 @@ def save_merged_tweets(filepath, incoming_tweets):
         reverse=True
     )
 
-    merged_list = enrich_recent_metrics(merged_list, target_count=35)
+    if merged_list:
+        merged_list = enrich_recent_metrics(merged_list, target_count=35)
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(merged_list, f, ensure_ascii=False, indent=2)
@@ -319,19 +329,19 @@ def save_merged_tweets(filepath, incoming_tweets):
     file_size_kb = os.path.getsize(filepath) / 1024.0
     log(
         f"📊 [結算報告] 本次探索: {len(incoming_tweets)} 則 | "
-        f"全新歷史新增: {added_count} 則 | "
+        f"全新新增: {added_count} 則 | "
         f"數據更新: {updated_count} 則 | "
         f"🎉 目前推文資料庫總數: {len(merged_list)} 則 (檔案大小: {file_size_kb:.1f} KB)"
     )
 
 if __name__ == "__main__":
-    log(f"🚀 開始執行 @{TARGET_HANDLE} 推文擷取與同步任務...")
+    log(f"🚀 開始執行 @{TARGET_HANDLE} 推文擷取與歷史回填任務...")
 
     existing_tweets = load_existing_tweets(TWEETS_FILE)
     existing_ids = {str(t.get("id", "")).strip() for t in existing_tweets if t.get("id")}
 
     user_id, latest_tweets = get_user_id_and_initial_tweets(TARGET_HANDLE)
-    log(f"🆔 成功取得 @{TARGET_HANDLE} 之 Twitter User ID: {user_id}")
+    log(f"🆔 取得 @{TARGET_HANDLE} 之 Twitter User ID: {user_id}")
 
     history_tweets = fetch_history_via_graphql(user_id, TARGET_HANDLE, existing_ids, max_pages=MAX_PAGES_TO_FETCH)
 
