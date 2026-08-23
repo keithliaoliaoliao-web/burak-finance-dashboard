@@ -14,30 +14,30 @@ OUTPUT_HTML = "docs/index.html"
 
 TWITTER_EPOCH = 1288834974657
 
-# 【第一層】：精準擴充的美股 9 大核心產業板塊對應字典
+# 美股 9 大核心產業板塊對應字典
 SECTOR_MAPPING = {
     "生技與醫療製藥": [
         "HIMS", "MRNA", "JNJ", "TEM", "LLY", "NVO", "ISRG", "CRSP", "VRTX", "AMGN", 
-        "BNTX", "PFE", "ABBV", "BIIB", "REGN", "ILMN", "EXAS", "DNA"
+        "BNTX", "PFE", "ABBV", "BIIB", "REGN", "ILMN", "EXAS", "DNA", "UNH"
     ],
     "半導體設備與封測": [
         "AMAT", "ASML", "LRCX", "KLAC", "AEHR", "AMKR", "ONTO", "CAMT", "TER", "ICHR", 
-        "FORM", "COHR", "ACLS", "UCTT"
+        "FORM", "COHR", "ACLS", "UCTT", "KLIC"
     ],
     "AI 算力與高速互連": [
         "NVDA", "AMD", "AVGO", "MRVL", "ARM", "ALAB", "INTC", "TSM", "QCOM", "CRDO", 
-        "POET", "MTSI", "AOSL", "DIOD"
+        "POET", "MTSI", "AOSL", "DIOD", "SMCI", "TSEM", "INDI", "LSCC", "AMBA"
     ],
     "光通訊與雷射網通": [
         "AAOI", "LITE", "COHR", "POET", "CIEN", "FN", "SIVE", "GLW", "CBRS", "ACIA", 
         "HLIT", "EXTR", "CALX", "INFN"
     ],
     "記憶體與儲存設備": [
-        "SNDK", "MU", "WDC", "PSTG", "STX", "NTAP"
+        "SNDK", "MU", "WDC", "PSTG", "STX", "NTAP", "SKHY", "YMTC"
     ],
     "AI 算力中心與採礦": [
         "NBIS", "APLD", "CRWV", "HUT", "IREN", "CIFR", "CLSK", "MARA", "RIOT", "CORZ", 
-        "WULF", "BITF", "SDIG"
+        "WULF", "BITF", "SDIG", "CRCL"
     ],
     "太空科技與國防": [
         "RKLB", "RCAT", "ASTS", "AVAV", "KTOS", "LMT", "RTX", "PL", "NOC", "GD", 
@@ -49,10 +49,10 @@ SECTOR_MAPPING = {
     ],
     "雲端巨頭與平台軟體": [
         "AMZN", "MSFT", "GOOGL", "META", "AAPL", "PLTR", "SNOW", "NOW", "CRWD", "DDOG", 
-        "NET", "PATH", "MDB", "ORCL", "CRM", "PANW", "ZS", "ADBE"
+        "NET", "PATH", "MDB", "ORCL", "CRM", "PANW", "ZS", "ADBE", "HOOD", "PYPL", "RDDT"
     ],
     "指數與主題科技 ETF": [
-        "ARKK", "QQQ", "SPY", "SMH", "SOXX", "XBI", "IWM", "ARKW", "ARKG"
+        "ARKK", "QQQ", "SPY", "SMH", "SOXX", "XBI", "IWM", "ARKW", "ARKG", "IBIT"
     ]
 }
 
@@ -347,7 +347,6 @@ def fetch_stock_quotes_and_fundamentals(tickers):
             except Exception:
                 pass
 
-            # 透過雙層引擎精確取得板塊
             sector_name = resolve_sector(symbol, info)
 
             if current_price is not None and float(current_price) > 0:
@@ -378,7 +377,7 @@ def fetch_stock_quotes_and_fundamentals(tickers):
 
     return quotes
 
-HTML_TEMPLATE = """<!DOCTYPE html>
+HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="zh-TW" class="dark">
 <head>
   <meta charset="UTF-8">
@@ -799,11 +798,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return watchlist.includes(ticker.toUpperCase());
     }
 
+    // 【核心修復】：嚴格驗證該股票是否屬於當前所選板塊
+    function isTickerInCurrentSector(sym) {
+      if (currentSector === 'ALL') return true;
+      if (currentSector === 'WATCHLIST') return isWatchlisted(sym);
+      
+      const sectorTickers = sectorMapping[currentSector] || [];
+      const quoteSector = stockQuotes[sym] ? stockQuotes[sym].sector : null;
+      
+      return sectorTickers.includes(sym) || quoteSector === currentSector;
+    }
+
     function highlightText(text) {
       if (!text) return '';
       return text
-        .replace(/(\\$[A-Za-z]{1,6})/g, '<button onclick="filterByTicker(\\'$1\\'.replace(\\'$\\', \\'\\').toUpperCase())" class="font-bold text-amber-400 bg-amber-950/60 hover:bg-amber-900/80 px-1 py-0.5 rounded border border-amber-500/30 transition inline-block">$1</button>')
-        .replace(/(https?:\\/\\/[^\\s]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline break-all">$1</a>');
+        .replace(/(\$[A-Za-z]{1,6})/g, '<button onclick="filterByTicker(\'$1\'.replace(\'$\', \'\').toUpperCase())" class="font-bold text-amber-400 bg-amber-950/60 hover:bg-amber-900/80 px-1 py-0.5 rounded border border-amber-500/30 transition inline-block">$1</button>')
+        .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline break-all">$1</a>');
     }
 
     function setViewMode(mode) {
@@ -871,19 +881,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         });
       });
 
-      const topTickers = Object.keys(counts).sort((a, b) => {
-        const aStar = isWatchlisted(a) ? 10000 : 0;
-        const bStar = isWatchlisted(b) ? 10000 : 0;
-        const scoreA = aStar + (recencyScores[a] || 0) * 2 + (counts[a] || 0);
-        const scoreB = bStar + (recencyScores[b] || 0) * 2 + (counts[b] || 0);
-        return scoreB - scoreA;
-      }).slice(0, 50).map(sym => [sym, counts[sym]]);
+      // 【核心修復】：在按鈕排序前加入 isTickerInCurrentSector 過濾
+      const topTickers = Object.keys(counts)
+        .filter(isTickerInCurrentSector)
+        .sort((a, b) => {
+          const aStar = isWatchlisted(a) ? 10000 : 0;
+          const bStar = isWatchlisted(b) ? 10000 : 0;
+          const scoreA = aStar + (recencyScores[a] || 0) * 2 + (counts[a] || 0);
+          const scoreB = bStar + (recencyScores[b] || 0) * 2 + (counts[b] || 0);
+          return scoreB - scoreA;
+        })
+        .slice(0, 50)
+        .map(sym => [sym, counts[sym]]);
 
       const total = viewTweets.length;
       const bullish = viewTweets.filter(t => t.sentiment === 'Bullish').length;
       const bearish = viewTweets.filter(t => t.sentiment === 'Bearish').length;
       const analyzed = viewTweets.filter(t => t.is_analyzed).length;
-      const uniqueTickers = Object.keys(counts).length;
+      const uniqueTickers = topTickers.length;
       const coveragePct = total ? Math.round((analyzed / total) * 100) : 0;
 
       document.getElementById('stat-total').innerText = total.toLocaleString();
@@ -904,7 +919,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     function renderTopTickers(tickersList) {
       const bar = document.getElementById('top-tickers-bar');
       if (tickersList.length === 0) {
-        bar.innerHTML = '<span class="text-xs text-slate-500">該條件下無符合推文標的</span>';
+        bar.innerHTML = '<span class="text-xs text-slate-500">該板塊下無符合的推文標的</span>';
         return;
       }
       bar.innerHTML = tickersList.map(([t, count]) => {
@@ -1437,7 +1452,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const total = viewTweets.length;
         const counts = {};
         viewTweets.forEach(t => t.tickers.forEach(sym => counts[sym] = (counts[sym] || 0) + 1));
-        const topSymbols = Object.keys(counts).slice(0, 5).join(', ');
+        const topSymbols = Object.keys(counts).filter(isTickerInCurrentSector).slice(0, 5).join(', ');
 
         appendChatMessage('ai', `
           📅 <b>已為你切換至「今日日報」視圖！</b><br>
@@ -1472,7 +1487,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         });
 
         const bullishList = Object.entries(counts)
-          .filter(([sym, data]) => data.total >= 2 && (data.bullish / (data.bullish + data.bearish || 1)) >= 0.6)
+          .filter(([sym, data]) => isTickerInCurrentSector(sym) && data.total >= 2 && (data.bullish / (data.bullish + data.bearish || 1)) >= 0.6)
           .sort((a, b) => b[1].bullish - a[1].bullish)
           .slice(0, 6);
 
@@ -1581,7 +1596,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (亮橘金主題、雙層板塊分類與估值卡已全部就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (亮橘金主題、純淨化板塊過濾與估值卡已全部就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
