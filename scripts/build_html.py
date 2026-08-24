@@ -66,7 +66,6 @@ def resolve_sector(ticker, yf_info=None):
             
     if yf_info and isinstance(yf_info, dict):
         ind = str(yf_info.get("industry", "")).lower()
-        sec = str(yf_info.get("sector", "")).lower()
 
         if any(w in ind for w in ["biotechnology", "drug", "pharmaceutical", "healthcare", "medical"]):
             return "生技與醫療製藥"
@@ -134,7 +133,7 @@ def load_cache(filepath):
             return {}
     except Exception as e:
         print(f"⚠️ 讀取快取檔案失敗 ({filepath}): {e}", flush=True)
-        return []
+        return {}
 
 def extract_tickers(text):
     """萃取推文中的美股代號"""
@@ -278,7 +277,7 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
         is_analyzed = False
 
         if ai_data and isinstance(ai_data, dict):
-            raw_sent = ai_data.get("sentiment", "Neutral")
+            raw_sent = str(ai_data.get("sentiment", "Neutral"))
             if any(w in raw_sent for w in ["Bull", "多"]):
                 sentiment = "Bullish"
             elif any(w in raw_sent for w in ["Bear", "空"]):
@@ -370,7 +369,7 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                 print(f"  ✅ ${symbol}: ${current_price:.2f} ({change_pct:+.2f}%) | 板塊: {sector_name}", flush=True)
             else:
                 quotes[symbol] = {"sector": sector_name}
-        except Exception:
+        except Exception as e:
             quotes[symbol] = {"sector": resolve_sector(symbol)}
 
     return quotes
@@ -380,7 +379,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Burak Finance 美股情報與 AI 對話助理</title>
+  <title>Burak Finance 美股情報儀表板 & AI 對話助理</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
@@ -406,12 +405,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    .gold-glow { box-shadow: 0 0 20px rgba(245, 158, 11, 0.15); }
   </style>
 </head>
 <body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white">
 
   <!-- 頂部導航 (Burak 亮橘金品牌設計) -->
-  <header class="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur sticky top-0 z-40">
+  <header class="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur sticky top-0 z-40">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-400 flex items-center justify-center font-bold text-slate-950 text-base shadow-lg shadow-amber-500/20">
@@ -496,7 +496,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <span>🔥</span> 標的快速篩選 ($TICKER)
         </h2>
         <div class="flex items-center gap-3">
-          <button onclick="openCompareModal()" class="text-xs font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1">
+          <button onclick="exportWatchlist()" class="text-xs text-slate-400 hover:text-amber-300">📤 匯出自選</button>
+          <button onclick="importWatchlist()" class="text-xs text-slate-400 hover:text-amber-300">📥 匯入自選</button>
+          <button onclick="openCompareModal()" class="text-xs font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-lg">
             ⚖️ 雙標的橫向對比
           </button>
           <button id="clear-ticker-btn" onclick="filterByTicker('')" class="text-xs text-amber-400 hover:underline hidden">清除標的篩選</button>
@@ -506,7 +508,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <!-- 個股即時行情專區 -->
-    <div id="stock-quote-section" class="bg-gradient-to-r from-slate-900/90 via-slate-900/70 to-slate-900/90 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden hidden space-y-4">
+    <div id="stock-quote-section" class="bg-gradient-to-r from-slate-900/90 via-slate-900/70 to-slate-900/90 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden hidden space-y-4 gold-glow">
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         
         <div class="flex items-center gap-4 flex-wrap">
@@ -581,8 +583,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       <!-- 歷史多空情緒趨勢圖容器 -->
       <div id="sentiment-chart-wrapper" class="hidden border-t border-slate-800/80 pt-4">
-        <div class="text-xs font-semibold text-slate-400 mb-2 flex items-center gap-1.5">
-          <span>📈</span> 近期 6 個月多空立場演變趨勢 (Sentiment Trend)
+        <div class="text-xs font-semibold text-slate-400 mb-2 flex items-center justify-between">
+          <span>📈 近期多空立場演變趨勢 (Sentiment Trend)</span>
+          <span class="text-[11px] text-amber-400 font-mono">Chart.js 數據驅動</span>
         </div>
         <div class="w-full h-[220px] bg-slate-950/70 p-3 rounded-lg border border-slate-800">
           <canvas id="sentimentChartCanvas"></canvas>
@@ -640,12 +643,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <button onclick="closeCompareModal()" class="text-slate-400 hover:text-white text-xl p-1 font-bold">✕</button>
       </div>
 
-      <div class="grid grid-cols-2 gap-4">
-        <div>
+      <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
+        <div class="sm:col-span-2">
           <label class="text-xs text-slate-400 font-semibold mb-1 block">標的 A</label>
           <select id="compare-select-a" onchange="renderComparisonMatrix()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-amber-400 font-mono font-bold"></select>
         </div>
-        <div>
+        <div class="text-center pt-3 sm:pt-4">
+          <button onclick="swapCompareTickers()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-amber-400 font-bold transition">
+            🔀 互換
+          </button>
+        </div>
+        <div class="sm:col-span-2">
           <label class="text-xs text-slate-400 font-semibold mb-1 block">標的 B</label>
           <select id="compare-select-b" onchange="renderComparisonMatrix()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-orange-400 font-mono font-bold"></select>
         </div>
@@ -687,7 +695,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         👋 你好！我是 Burak AI 助理，你可以直接點擊或詢問：
         <div class="mt-2 flex flex-wrap gap-1.5">
           <button onclick="handleQuickAsk('日報')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">📅 日報</button>
-          <button onclick="handleQuickAsk('目前有哪些半導體設備股票？')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔬 半導體設備</button>
+          <button onclick="handleQuickAsk('半導體設備')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔬 半導體設備</button>
+          <button onclick="handleQuickAsk('低估值')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">💰 低估值標的</button>
           <button onclick="handleQuickAsk('幫我看 AMAT')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 AMAT</button>
           <button onclick="handleQuickAsk('幫我看 HIMS')" class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">🔍 幫我看 HIMS</button>
         </div>
@@ -796,6 +805,34 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return watchlist.includes(ticker.toUpperCase());
     }
 
+    function exportWatchlist() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(watchlist, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "burak_watchlist.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
+    function importWatchlist() {
+      const input = prompt("請貼上匯出的 Watchlist JSON 陣列 (例如: [\\"HIMS\\",\\"AMAT\\\"])：");
+      if (!input) return;
+      try {
+        const parsed = JSON.parse(input);
+        if (Array.isArray(parsed)) {
+          watchlist = [...new Set([...watchlist, ...parsed.map(x => String(x).toUpperCase())])];
+          localStorage.setItem('burak_watchlist', JSON.stringify(watchlist));
+          updateAggregatedView();
+          alert("✅ 自選股已成功匯入！");
+        } else {
+          alert("⚠️ 格式不正確，請提供 JSON 陣列。");
+        }
+      } catch(e) {
+        alert("⚠️ 解析 JSON 失敗，請確認格式。");
+      }
+    }
+
     // 嚴格驗證該股票是否屬於當前所選板塊
     function isTickerInCurrentSector(sym) {
       if (currentSector === 'ALL') return true;
@@ -831,7 +868,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.querySelectorAll('.sector-btn').forEach(btn => {
         const active = btn.dataset.sector === sector;
         btn.className = `sector-btn px-3 py-1 rounded-lg text-xs font-medium border transition ${
-          active ? 'border-slate-700 bg-slate-800 text-white font-bold' : 'border-transparent text-slate-400 hover:bg-slate-800'
+          active ? 'border-slate-700 bg-slate-800 text-white font-bold shadow-sm' : 'border-transparent text-slate-400 hover:bg-slate-800'
         }`;
       });
       displayLimit = 25;
@@ -879,7 +916,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         });
       });
 
-      // 在按鈕排序前加入 isTickerInCurrentSector 過濾
       const topTickers = Object.keys(counts)
         .filter(isTickerInCurrentSector)
         .sort((a, b) => {
@@ -889,7 +925,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const scoreB = bStar + (recencyScores[b] || 0) * 2 + (counts[b] || 0);
           return scoreB - scoreA;
         })
-        .slice(0, 50)
+        .slice(0, 60)
         .map(sym => [sym, counts[sym]]);
 
       const total = viewTweets.length;
@@ -917,14 +953,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     function renderTopTickers(tickersList) {
       const bar = document.getElementById('top-tickers-bar');
       if (tickersList.length === 0) {
-        bar.innerHTML = '<span class="text-xs text-slate-500">該板塊下無符合的推文標的</span>';
+        bar.innerHTML = '<span class="text-xs text-slate-500">當前條件下無符合標的</span>';
         return;
       }
       bar.innerHTML = tickersList.map(([t, count]) => {
         const quote = stockQuotes[t];
         const starred = isWatchlisted(t);
         let miniBadge = '';
-        if (quote && quote.changePct !== undefined) {
+        if (quote && quote.changePct !== undefined && quote.changePct !== null) {
           const isPos = quote.changePct >= 0;
           miniBadge = `<span class="text-[10px] ml-1 ${isPos ? 'text-emerald-400' : 'text-rose-400'}">${isPos ? '+' : ''}${quote.changePct.toFixed(1)}%</span>`;
         }
@@ -1000,7 +1036,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           },
           scales: {
             x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
-            y: { ticks: { color: '#94a3b8', stepSize: 1 }, grid: { color: '#1e293b' } }
+            y: { ticks: { color: '#94a3b8', precision: 0 }, grid: { color: '#1e293b' } }
           }
         }
       });
@@ -1091,7 +1127,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       } else {
         document.getElementById('quote-price').innerText = '即時行情模式';
         currencyLabel.innerText = '';
-        changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊下方「K 線圖」展開即時走勢</span>';
+        changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊「K 線圖」展開即時走勢</span>';
         changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-medium';
         document.getElementById('val-mkt-cap').innerText = '-';
         document.getElementById('val-fwd-pe').innerText = '-';
@@ -1132,6 +1168,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('compare-modal').classList.add('hidden');
     }
 
+    function swapCompareTickers() {
+      const selectA = document.getElementById('compare-select-a');
+      const selectB = document.getElementById('compare-select-b');
+      const temp = selectA.value;
+      selectA.value = selectB.value;
+      selectB.value = temp;
+      renderComparisonMatrix();
+    }
+
     function renderComparisonMatrix() {
       const symA = document.getElementById('compare-select-a').value;
       const symB = document.getElementById('compare-select-b').value;
@@ -1148,25 +1193,41 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const bullA = tweetsA.filter(t => t.sentiment === 'Bullish').length;
       const bullB = tweetsB.filter(t => t.sentiment === 'Bullish').length;
 
+      const pctA = tweetsA.length ? Math.round((bullA / tweetsA.length) * 100) : 0;
+      const pctB = tweetsB.length ? Math.round((bullB / tweetsB.length) * 100) : 0;
+
+      // 智慧優勢高亮判斷輔助函式
+      const makeBadge = (valStr, isBetter) => {
+        if (isBetter) {
+          return `<span class="bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded border border-amber-500/40">${valStr} ⭐</span>`;
+        }
+        return valStr;
+      };
+
       const rows = [
-        ['所屬板塊', dataA.sector || '-', dataB.sector || '-'],
-        ['即時股價', dataA.price ? `$${dataA.price}` : '-', dataB.price ? `$${dataB.price}` : '-'],
-        ['單日漲跌幅', dataA.changePct !== undefined && dataA.changePct !== null ? `${dataA.changePct > 0 ? '+' : ''}${dataA.changePct}%` : '-', dataB.changePct !== undefined && dataB.changePct !== null ? `${dataB.changePct > 0 ? '+' : ''}${dataB.changePct}%` : '-'],
-        ['社群提及總數', `${tweetsA.length} 則`, `${tweetsB.length} 則`],
-        ['看多偏向度 (Bullish %)', `${tweetsA.length ? Math.round(bullA/tweetsA.length*100) : 0}% (${bullA}多)`, `${tweetsB.length ? Math.round(bullB/tweetsB.length*100) : 0}% (${bullB}多)`],
-        ['市值 (Market Cap)', formatNumber(dataA.marketCap), formatNumber(dataB.marketCap)],
-        ['前瞻本益比 (Forward P/E)', dataA.forwardPE ? `${dataA.forwardPE}x` : '-', dataB.forwardPE ? `${dataB.forwardPE}x` : '-'],
-        ['市銷率 (P/S)', dataA.priceToSales ? `${dataA.priceToSales}x` : '-', dataB.priceToSales ? `${dataB.priceToSales}x` : '-'],
-        ['營收年增率 (YoY)', dataA.revenueGrowth ? `${dataA.revenueGrowth}%` : '-', dataB.revenueGrowth ? `${dataB.revenueGrowth}%` : '-'],
-        ['下次財報日', dataA.earningsDate || '-', dataB.earningsDate || '-']
+        ['所屬板塊', dataA.sector || '-', dataB.sector || '-', false, false],
+        ['即時股價', dataA.price ? `$${dataA.price}` : '-', dataB.price ? `$${dataB.price}` : '-', false, false],
+        ['單日漲跌幅', 
+          dataA.changePct !== undefined && dataA.changePct !== null ? `${dataA.changePct > 0 ? '+' : ''}${dataA.changePct}%` : '-', 
+          dataB.changePct !== undefined && dataB.changePct !== null ? `${dataB.changePct > 0 ? '+' : ''}${dataB.changePct}%` : '-',
+          (dataA.changePct || -999) > (dataB.changePct || -999),
+          (dataB.changePct || -999) > (dataA.changePct || -999)
+        ],
+        ['社群提及總數', `${tweetsA.length} 則`, `${tweetsB.length} 則`, tweetsA.length > tweetsB.length, tweetsB.length > tweetsA.length],
+        ['看多偏向度 (Bullish %)', `${pctA}% (${bullA}多)`, `${pctB}% (${bullB}多)`, pctA > pctB, pctB > pctA],
+        ['市值 (Market Cap)', formatNumber(dataA.marketCap), formatNumber(dataB.marketCap), (dataA.marketCap||0) > (dataB.marketCap||0), (dataB.marketCap||0) > (dataA.marketCap||0)],
+        ['前瞻本益比 (Lower is Better)', dataA.forwardPE ? `${dataA.forwardPE}x` : '-', dataB.forwardPE ? `${dataB.forwardPE}x` : '-', (dataA.forwardPE && dataB.forwardPE) ? dataA.forwardPE < dataB.forwardPE : false, (dataA.forwardPE && dataB.forwardPE) ? dataB.forwardPE < dataA.forwardPE : false],
+        ['市銷率 (P/S)', dataA.priceToSales ? `${dataA.priceToSales}x` : '-', dataB.priceToSales ? `${dataB.priceToSales}x` : '-', (dataA.priceToSales && dataB.priceToSales) ? dataA.priceToSales < dataB.priceToSales : false, (dataA.priceToSales && dataB.priceToSales) ? dataB.priceToSales < dataA.priceToSales : false],
+        ['營收年增率 (YoY)', dataA.revenueGrowth ? `${dataA.revenueGrowth}%` : '-', dataB.revenueGrowth ? `${dataB.revenueGrowth}%` : '-', (dataA.revenueGrowth || -999) > (dataB.revenueGrowth || -999), (dataB.revenueGrowth || -999) > (dataA.revenueGrowth || -999)],
+        ['下次財報日', dataA.earningsDate || '-', dataB.earningsDate || '-', false, false]
       ];
 
       const tbody = document.getElementById('compare-table-body');
-      tbody.innerHTML = rows.map(([label, valA, valB]) => `
+      tbody.innerHTML = rows.map(([label, valA, valB, aBetter, bBetter]) => `
         <tr class="hover:bg-slate-800/40">
-          <td class="py-2 px-3 text-slate-400 font-sans">${label}</td>
-          <td class="py-2 px-3 text-slate-200 font-semibold">${valA}</td>
-          <td class="py-2 px-3 text-slate-200 font-semibold">${valB}</td>
+          <td class="py-2.5 px-3 text-slate-400 font-sans">${label}</td>
+          <td class="py-2.5 px-3 text-slate-200 font-semibold">${makeBadge(valA, aBetter)}</td>
+          <td class="py-2.5 px-3 text-slate-200 font-semibold">${makeBadge(valB, bBetter)}</td>
         </tr>
       `).join('');
     }
@@ -1461,6 +1522,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
+      if (q.includes('低估值') || q.includes('本益比') || q.includes('便宜')) {
+        const valueTickers = Object.entries(stockQuotes)
+          .filter(([sym, data]) => data.forwardPE && data.forwardPE > 0)
+          .sort((a, b) => a[1].forwardPE - b[1].forwardPE)
+          .slice(0, 5);
+
+        let resHtml = '💰 <b>前瞻本益比 (Forward P/E) 最具估值吸引力標的：</b><br>';
+        valueTickers.forEach(([sym, data]) => {
+          resHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button>：Fwd P/E <b>${data.forwardPE}x</b> (${data.sector})<br>`;
+        });
+        appendChatMessage('ai', resHtml);
+        return;
+      }
+
       if (q.includes('生技') || q.includes('醫療') || q.includes('藥')) {
         setSectorFilter('生技與醫療製藥');
         appendChatMessage('ai', '💊 <b>已為你篩選「生技與醫療製藥」板塊！</b><br>包含 \\$HIMS, \\$MRNA, \\$JNJ, \\$TEM 等相關討論推文。');
@@ -1507,7 +1582,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const tickerTweets = allTweets.filter(t => t.tickers.includes(symbol));
         if (tickerTweets.length > 0) {
           const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
-          const first = chronological[0];
           const latest = chronological[chronological.length - 1];
           const qData = stockQuotes[symbol] || {};
           const priceText = qData.price ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)` : '即時行情模式';
@@ -1594,7 +1668,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (按鈕板塊純淨化過濾已就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (4 大優化模組已全面就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
