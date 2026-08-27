@@ -707,24 +707,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 4. 浮動 AI 智能對話助理 (修復右上角設定齒輪與關閉按鈕佈局) -->
+  <!-- 4. 浮動 AI 智能對話助理 (修復抽屜高度自適應，防止頂部被推擠出螢幕) -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
     </button>
   </div>
 
-  <div id="ai-chat-drawer" class="fixed bottom-20 right-6 z-50 w-[92vw] sm:w-[450px] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col h-[540px]">
-    <!-- 頂部標題列：加入 shrink-0 與 min-w-0 防止右上角按鈕被擠壓出視窗 -->
-    <div class="p-3.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-2 overflow-hidden">
+  <div id="ai-chat-drawer" class="fixed bottom-20 right-4 sm:right-6 z-50 w-[94vw] sm:w-[440px] max-h-[85vh] h-[min(500px,calc(100vh-120px))] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col">
+    <!-- 頂部標題列：保證 ⚙️ 與 ✕ 按鈕 100% 固定顯示在視窗內 -->
+    <div class="p-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
       <div class="flex items-center gap-2 min-w-0">
         <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0"></span>
         <span class="font-bold text-sm text-white truncate shrink-0">Burak AI</span>
         <span id="chat-mode-badge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 truncate">⚡ 本機快速模式</span>
       </div>
       <div class="flex items-center gap-1.5 shrink-0">
-        <button onclick="configureGeminiKey()" class="text-slate-400 hover:text-amber-400 p-1 text-xs transition" title="設定 Gemini API Key">⚙️</button>
-        <button onclick="toggleChatDrawer()" class="text-slate-400 hover:text-white font-bold p-1 transition">✕</button>
+        <button onclick="openApiKeyModal()" class="text-slate-400 hover:text-amber-400 p-1 text-xs rounded hover:bg-slate-800 transition" title="設定 Gemini API Key">⚙️</button>
+        <button onclick="toggleChatDrawer()" class="text-slate-400 hover:text-white font-bold p-1 text-xs rounded hover:bg-slate-800 transition">✕</button>
       </div>
     </div>
 
@@ -741,10 +741,48 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <form onsubmit="handleChatSubmit(event)" class="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
+    <form onsubmit="handleChatSubmit(event)" class="p-2.5 bg-slate-950 border-t border-slate-800 flex gap-2 shrink-0">
       <input type="text" id="chat-input" placeholder="輸入問題（可詢問觀點、估值或個股分析）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
       <button type="submit" id="chat-send-btn" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition">發送</button>
     </form>
+  </div>
+
+  <!-- 專屬 Gemini API Key 設定彈窗 (取代 prompt 彈窗) -->
+  <div id="apikey-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-amber-400 text-lg">⚙️</span>
+          <h3 class="text-sm font-bold text-white">設定 Google Gemini API Key</h3>
+        </div>
+        <button onclick="closeApiKeyModal()" class="text-slate-400 hover:text-white text-base font-bold">✕</button>
+      </div>
+
+      <div class="space-y-2">
+        <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key：</label>
+        <input type="password" id="apikey-input" placeholder="AIzaSy..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-amber-400 font-mono focus:outline-none focus:border-amber-500" />
+        <p class="text-[11px] text-slate-400">
+          金鑰僅保存在你的本機瀏覽器（localStorage），不會上傳至伺服器。<br>
+          👉 可至 <a href="https://aistudio.google.dev/apikey" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio (點此開啟)</a> 免費取得。
+        </p>
+      </div>
+
+      <div id="apikey-test-status" class="text-xs font-mono hidden p-2.5 rounded-lg border"></div>
+
+      <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+        <button onclick="clearApiKey()" class="px-3 py-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium">
+          🗑️ 清除金鑰 (回本機模式)
+        </button>
+        <div class="flex items-center gap-2">
+          <button onclick="testApiKeyConnection()" id="apikey-test-btn" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition">
+            🔍 測試連線
+          </button>
+          <button onclick="saveApiKeyModal()" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition">
+            💾 儲存並啟用
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 2. 個股 AI 深度論點脈絡 Modal (論點故事、3 大里程碑、歷史風險) -->
@@ -846,24 +884,86 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function configureGeminiKey() {
-      const currentKey = geminiApiKey ? `${geminiApiKey.slice(0, 6)}...${geminiApiKey.slice(-4)}` : '尚未設定';
-      const input = prompt(`請輸入你的 Google Gemini API Key\\n(目前狀態: ${currentKey})\\n若要清除請輸入 CLEAR：`, geminiApiKey);
-      if (input === null) return;
-      
-      // 自動清洗：清除多餘空白、換行與單雙引號
-      const sanitized = input.trim().replace(/["'\\s]/g, '');
+    function openApiKeyModal() {
+      const modal = document.getElementById('apikey-modal');
+      const input = document.getElementById('apikey-input');
+      const statusBox = document.getElementById('apikey-test-status');
+      input.value = geminiApiKey || '';
+      statusBox.classList.add('hidden');
+      modal.classList.remove('hidden');
+    }
 
-      if (sanitized.toUpperCase() === 'CLEAR') {
-        geminiApiKey = '';
-        localStorage.removeItem('burak_gemini_api_key');
-        alert('已切換回【本機快速模式】！');
-      } else if (sanitized) {
-        geminiApiKey = sanitized;
-        localStorage.setItem('burak_gemini_api_key', sanitized);
-        alert('✅ Gemini API Key 已成功設定！已切換至【Gemini 雲端連線模式】。');
+    function closeApiKeyModal() {
+      document.getElementById('apikey-modal').classList.add('hidden');
+    }
+
+    async function testApiKeyConnection() {
+      const input = document.getElementById('apikey-input');
+      const key = input.value.trim().replace(/["'\\s]/g, '');
+      const statusBox = document.getElementById('apikey-test-status');
+      const testBtn = document.getElementById('apikey-test-btn');
+
+      if (!key) {
+        statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-rose-950/30 border-rose-800 text-rose-300';
+        statusBox.innerText = '⚠️ 請先輸入 API Key 再進行測試！';
+        statusBox.classList.remove('hidden');
+        return;
       }
+
+      testBtn.disabled = true;
+      testBtn.innerText = '連線測試中...';
+      statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-slate-800 border-slate-700 text-amber-400';
+      statusBox.innerText = '⏳ 正在向 Google AI 伺服器發送 Ping 請求...';
+      statusBox.classList.remove('hidden');
+
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: 'Hello' }] }]
+          })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.candidates) {
+          statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-emerald-950/40 border-emerald-800 text-emerald-300';
+          statusBox.innerHTML = '✅ <b>連線成功 (HTTP 200)！</b><br>此 API Key 完全合法且可正常使用，請點擊「儲存並啟用」。';
+        } else {
+          const errMsg = (data.error && data.error.message) ? data.error.message : 'HTTP ' + response.status;
+          statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-rose-950/40 border-rose-800 text-rose-300';
+          statusBox.innerHTML = `❌ <b>驗證失敗：</b>${errMsg}<br><br>💡 <b>提示：</b>請確認是在 <a href="https://aistudio.google.dev/apikey" target="_blank" class="underline text-amber-400">Google AI Studio</a> 建立的免費 Key（開頭通常為 <code>AIzaSy</code>）。`;
+        }
+      } catch (err) {
+        statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-rose-950/40 border-rose-800 text-rose-300';
+        statusBox.innerHTML = `❌ <b>網路連線失敗：</b>${err.message}`;
+      } finally {
+        testBtn.disabled = false;
+        testBtn.innerText = '🔍 測試連線';
+      }
+    }
+
+    function saveApiKeyModal() {
+      const input = document.getElementById('apikey-input');
+      const key = input.value.trim().replace(/["'\\s]/g, '');
+      if (key) {
+        geminiApiKey = key;
+        localStorage.setItem('burak_gemini_api_key', key);
+        updateChatModeBadge();
+        closeApiKeyModal();
+        alert('✅ Gemini API Key 已成功儲存並切換至【Gemini 雲端連線模式】！');
+      } else {
+        clearApiKey();
+      }
+    }
+
+    function clearApiKey() {
+      geminiApiKey = '';
+      localStorage.removeItem('burak_gemini_api_key');
       updateChatModeBadge();
+      closeApiKeyModal();
+      alert('已清除金鑰，切換回【本機快速模式】。');
     }
 
     function formatNumber(num) {
@@ -1776,7 +1876,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           if (data.error && data.error.message) {
             errorDetail = data.error.message;
           }
-          loadingMsg.innerHTML = `⚠️ Gemini API 回傳異常：<b>${errorDetail}</b><br><br>💡 <b>建議解決步驟：</b><br>1. 請至 <a href="https://aistudio.google.dev/" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio</a> 重新建立並複製 Key。<br>2. 確定 Key 未限制 Google Cloud 參照網址（或將 <code>keithliaoliaoliao-web.github.io</code> 加入白名單）。`;
+          loadingMsg.innerHTML = `⚠️ Gemini API 回傳異常：<b>${errorDetail}</b><br><br>💡 <b>解決步驟：</b>請點擊右上角 <b>⚙️ 設定</b> 重新輸入並點擊「🔍 測試連線」。`;
         }
       } catch (err) {
         console.error('Gemini API 請求失敗:', err);
@@ -1917,6 +2017,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (e.key === 'Escape') {
         closeDeepDiveModal();
         closeCompareModal();
+        closeApiKeyModal();
       }
     });
 
@@ -1954,7 +2055,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (四大功能全面就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (抽屜排版與 API Key 測試彈窗已全面修復)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
