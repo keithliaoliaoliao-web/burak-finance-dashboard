@@ -131,7 +131,7 @@ def load_cache(filepath):
             return {}
     except Exception as e:
         print(f"⚠️ 讀取快取檔案失敗 ({filepath}): {e}", flush=True)
-        return {}
+        return []
 
 def extract_tickers(text):
     """萃取推文中的美股代號"""
@@ -707,7 +707,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 4. 浮動 AI 智能對話助理 (雙模式：本機快速 / Gemini 雲端) -->
+  <!-- 4. 浮動 AI 智能對話助理 (修復右上角設定齒輪與關閉按鈕佈局) -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -715,15 +715,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div id="ai-chat-drawer" class="fixed bottom-20 right-6 z-50 w-[92vw] sm:w-[450px] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col h-[540px]">
-    <div class="p-3.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-        <span class="font-bold text-sm text-white">Burak AI 對話助理</span>
-        <span id="chat-mode-badge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">⚡ 本機快速模式</span>
+    <!-- 頂部標題列：加入 shrink-0 與 min-w-0 防止右上角按鈕被擠壓出視窗 -->
+    <div class="p-3.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-2 overflow-hidden">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0"></span>
+        <span class="font-bold text-sm text-white truncate shrink-0">Burak AI</span>
+        <span id="chat-mode-badge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 truncate">⚡ 本機快速模式</span>
       </div>
-      <div class="flex items-center gap-1.5">
-        <button onclick="configureGeminiKey()" class="text-slate-400 hover:text-amber-400 p-1 text-xs" title="設定 Gemini API Key">⚙️</button>
-        <button onclick="toggleChatDrawer()" class="text-slate-400 hover:text-white font-bold p-1">✕</button>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button onclick="configureGeminiKey()" class="text-slate-400 hover:text-amber-400 p-1 text-xs transition" title="設定 Gemini API Key">⚙️</button>
+        <button onclick="toggleChatDrawer()" class="text-slate-400 hover:text-white font-bold p-1 transition">✕</button>
       </div>
     </div>
 
@@ -838,10 +839,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const badge = document.getElementById('chat-mode-badge');
       if (geminiApiKey) {
         badge.innerText = '🌟 Gemini 雲端連線';
-        badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40';
+        badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 truncate';
       } else {
         badge.innerText = '⚡ 本機快速模式';
-        badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700';
+        badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 truncate';
       }
     }
 
@@ -850,14 +851,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const input = prompt(`請輸入你的 Google Gemini API Key\\n(目前狀態: ${currentKey})\\n若要清除請輸入 CLEAR：`, geminiApiKey);
       if (input === null) return;
       
-      const trimmed = input.trim();
-      if (trimmed.toUpperCase() === 'CLEAR') {
+      // 自動清洗：清除多餘空白、換行與單雙引號
+      const sanitized = input.trim().replace(/["'\\s]/g, '');
+
+      if (sanitized.toUpperCase() === 'CLEAR') {
         geminiApiKey = '';
         localStorage.removeItem('burak_gemini_api_key');
         alert('已切換回【本機快速模式】！');
-      } else if (trimmed) {
-        geminiApiKey = trimmed;
-        localStorage.setItem('burak_gemini_api_key', trimmed);
+      } else if (sanitized) {
+        geminiApiKey = sanitized;
+        localStorage.setItem('burak_gemini_api_key', sanitized);
         alert('✅ Gemini API Key 已成功設定！已切換至【Gemini 雲端連線模式】。');
       }
       updateChatModeBadge();
@@ -1081,7 +1084,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const history = quote.history || [];
       if (!history.length) return null;
 
-      // 尋找在首次提及日期或之後最接近的一天收盤價
       let basePriceObj = history.find(h => h.d >= firstDateStr) || history[0];
       if (!basePriceObj || !basePriceObj.c) return null;
 
@@ -1097,7 +1099,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       };
     }
 
-    // 1. 股價走勢與多空點位疊圖
+    // 1. 股價走勢與多空點位疊圖 (Chart.js)
     function renderPriceOverlayChart(ticker) {
       if (!ticker) return;
       const quote = stockQuotes[ticker];
@@ -1115,7 +1117,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const labels = history.map(h => h.d);
       const prices = history.map(h => h.c);
 
-      // 建立推文在日期的映射字典
       const tweetMap = {};
       tickerTweets.forEach(t => {
         const d = t.day || (t.date ? t.date.slice(0, 10) : '');
@@ -1125,7 +1126,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
       });
 
-      // 設定點的顏色與大小 (有推文的日期給予圓點)
       const pointColors = [];
       const pointRadiuses = [];
       const pointHoverRadiuses = [];
@@ -1136,11 +1136,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const hasBull = tweetsOnDay.some(t => t.sentiment === 'Bullish');
           const hasBear = tweetsOnDay.some(t => t.sentiment === 'Bearish');
           if (hasBull) {
-            pointColors.push('#10b981'); // 綠色
+            pointColors.push('#10b981');
           } else if (hasBear) {
-            pointColors.push('#f43f5e'); // 紅色
+            pointColors.push('#f43f5e');
           } else {
-            pointColors.push('#38bdf8'); // 藍色
+            pointColors.push('#38bdf8');
           }
           pointRadiuses.push(6);
           pointHoverRadiuses.push(9);
@@ -1273,7 +1273,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const currencyLabel = document.getElementById('quote-currency-label');
       const returnBadge = document.getElementById('quote-return-badge');
 
-      // 首次提及投報率計算
       const retData = calculateReturnSinceFirstMention(ticker);
       if (retData) {
         returnBadge.classList.remove('hidden');
@@ -1322,7 +1321,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       } else {
         document.getElementById('quote-price').innerText = '即時行情模式';
         currencyLabel.innerText = '';
-        changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊下方「即時 K 線」展開走勢</span>';
+        changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊「即時 K 線」展開走勢</span>';
         changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-medium';
         document.getElementById('val-mkt-cap').innerText = '-';
         document.getElementById('val-fwd-pe').innerText = '-';
@@ -1468,7 +1467,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       thesisText += ` 截至最新一次發布（<b>${latestMention.date}</b>），對該標的的定調為【<b>${latestMention.sentiment}</b>】，核心觀點為：「${latestMention.summary || latestMention.translation_zh || latestMention.text.slice(0, 90)}」。`;
       storyEl.innerHTML = thesisText;
 
-      // 挑選 3 大代表性里程碑 (1. 起點建案, 2. 核心催化/高互動, 3. 最新定調)
+      // 挑選 3 大代表性里程碑
       const milestones = [];
       milestones.push({
         tag: '🚀 里程碑 1：首次關注起點 (Genesis)',
@@ -1509,7 +1508,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       `).join('');
 
-      // 時間軸列表
       const timelineContainer = document.getElementById('modal-timeline');
       timelineContainer.innerHTML = chronological.map(item => `
         <div class="flex items-center gap-3 text-xs border-l-2 border-slate-800 pl-3 py-1 font-mono">
@@ -1519,7 +1517,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       `).join('');
 
-      // 歷史風險警戒
       const riskTweets = tickerTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('警戒') || t.summary.includes('跌'))));
       const riskContainer = document.getElementById('modal-risks');
       if (riskTweets.length > 0) {
@@ -1707,7 +1704,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 4. AI 智能對話助理 (支援本機解析與 Gemini 雲端 API)
+    // 4. AI 智能對話助理 (支援本機解析與 Gemini 1.5 Flash 雲端 API)
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -1754,13 +1751,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const loadingMsg = appendChatMessage('ai', '🌟 Gemini 正在深入分析社群情報與基本面...');
 
       try {
-        // 打包前 25 則最新推文與熱門標的行情作為上下文
+        const cleanKey = geminiApiKey.replace(/["'\\s]/g, '');
+
         const contextTweets = allTweets.slice(0, 25).map(t => `[${t.date}] $${t.tickers.join(',$') || '大盤'} (${t.sentiment}): ${t.summary || t.text}`).join('\\n');
         const contextTickers = Object.entries(stockQuotes).slice(0, 20).map(([k, v]) => `$${k}: $${v.price || '-'} (PE: ${v.forwardPE || '-'}, 板塊: ${v.sector})`).join('; ');
 
         const systemPrompt = `你是一位專業的美股社群量化情報分析專家，請基於以下【Burak Finance】社群情報與美股數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n【即時行情摘要】：\\n${contextTickers}\\n\\n【近期關鍵推文摘要】：\\n${contextTweets}\\n\\n使用者問題：${userQuery}`;
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${cleanKey}`;
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1772,13 +1770,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const data = await response.json();
         if (data.candidates && data.candidates[0] && data.candidates[0].content) {
           const aiResponseText = data.candidates[0].content.parts[0].text;
-          loadingMsg.innerHTML = `<b>Burak AI (Gemini 2.5 Flash)：</b><br>${aiResponseText.replace(/\\n/g, '<br>')}`;
+          loadingMsg.innerHTML = `<b>Burak AI (Gemini 1.5 Flash)：</b><br>${aiResponseText.replace(/\\n/g, '<br>')}`;
         } else {
-          loadingMsg.innerHTML = '⚠️ Gemini API 回傳異常，請檢查金鑰或額度，已切回本機分析模式。<br>' + (data.error ? data.error.message : '');
+          let errorDetail = 'API key 無效或權限不符。';
+          if (data.error && data.error.message) {
+            errorDetail = data.error.message;
+          }
+          loadingMsg.innerHTML = `⚠️ Gemini API 回傳異常：<b>${errorDetail}</b><br><br>💡 <b>建議解決步驟：</b><br>1. 請至 <a href="https://aistudio.google.dev/" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio</a> 重新建立並複製 Key。<br>2. 確定 Key 未限制 Google Cloud 參照網址（或將 <code>keithliaoliaoliao-web.github.io</code> 加入白名單）。`;
         }
       } catch (err) {
         console.error('Gemini API 請求失敗:', err);
-        loadingMsg.innerHTML = `⚠️ 連線至 Gemini API 失敗 (${err.message})，建議點擊右上角 ⚙️ 檢查金鑰。`;
+        loadingMsg.innerHTML = `⚠️ 連線至 Gemini API 失敗 (${err.message})。`;
       } finally {
         sendBtn.disabled = false;
       }
@@ -1952,7 +1954,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (四大進階功能全面就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (四大功能全面就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
