@@ -665,7 +665,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   </main>
 
-  <!-- 3. 雙標的橫向深度對比矩陣 Modal (含互換與優勢高亮徽章) -->
+  <!-- 3. 雙標的橫向深度對比矩陣 Modal -->
   <div id="compare-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-4">
@@ -707,7 +707,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 4. 浮動 AI 智能對話助理 (修復抽屜高度自適應，防止頂部被推擠出螢幕) -->
+  <!-- 4. 浮動 AI 智能對話助理 (高度自適應與固定按鈕列) -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -715,7 +715,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div id="ai-chat-drawer" class="fixed bottom-20 right-4 sm:right-6 z-50 w-[94vw] sm:w-[440px] max-h-[85vh] h-[min(500px,calc(100vh-120px))] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col">
-    <!-- 頂部標題列：保證 ⚙️ 與 ✕ 按鈕 100% 固定顯示在視窗內 -->
+    <!-- 頂部標題列 -->
     <div class="p-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
       <div class="flex items-center gap-2 min-w-0">
         <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0"></span>
@@ -747,7 +747,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </form>
   </div>
 
-  <!-- 專屬 Gemini API Key 設定彈窗 (取代 prompt 彈窗) -->
+  <!-- 專屬 Gemini API Key 設定彈窗 (含 👁️ 密碼明暗切換與詳細診斷) -->
   <div id="apikey-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -760,18 +760,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       <div class="space-y-2">
         <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key：</label>
-        <input type="password" id="apikey-input" placeholder="AIzaSy..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-amber-400 font-mono focus:outline-none focus:border-amber-500" />
-        <p class="text-[11px] text-slate-400">
-          金鑰僅保存在你的本機瀏覽器（localStorage），不會上傳至伺服器。<br>
-          👉 可至 <a href="https://aistudio.google.dev/apikey" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio (點此開啟)</a> 免費取得。
+        <div class="relative flex items-center">
+          <input type="password" id="apikey-input" placeholder="AIzaSy..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-10 py-2.5 text-xs text-amber-400 font-mono focus:outline-none focus:border-amber-500" />
+          <button type="button" onclick="toggleApiKeyVisibility()" id="apikey-eye-btn" class="absolute right-2.5 text-slate-400 hover:text-white text-sm p-1" title="顯示/隱藏金鑰">👁️</button>
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">
+          金鑰僅保存在本機瀏覽器（localStorage），不會上傳至伺服器。<br>
+          👉 請直接至 <a href="https://aistudio.google.dev/apikey" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio (點此開啟)</a> 免費取得（開頭應為 <code>AIzaSy</code>）。
         </p>
       </div>
 
-      <div id="apikey-test-status" class="text-xs font-mono hidden p-2.5 rounded-lg border"></div>
+      <div id="apikey-test-status" class="text-xs font-mono hidden p-3 rounded-xl border"></div>
 
       <div class="flex items-center justify-between pt-2 border-t border-slate-800">
         <button onclick="clearApiKey()" class="px-3 py-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium">
-          🗑️ 清除金鑰 (回本機模式)
+          🗑️ 清除金鑰
         </button>
         <div class="flex items-center gap-2">
           <button onclick="testApiKeyConnection()" id="apikey-test-btn" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition">
@@ -785,7 +788,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 2. 個股 AI 深度論點脈絡 Modal (論點故事、3 大里程碑、歷史風險) -->
+  <!-- 2. 個股 AI 深度論點脈絡 Modal -->
   <div id="deepdive-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-4">
@@ -884,6 +887,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    function toggleApiKeyVisibility() {
+      const input = document.getElementById('apikey-input');
+      const btn = document.getElementById('apikey-eye-btn');
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.innerText = '🙈';
+      } else {
+        input.type = 'password';
+        btn.innerText = '👁️';
+      }
+    }
+
     function openApiKeyModal() {
       const modal = document.getElementById('apikey-modal');
       const input = document.getElementById('apikey-input');
@@ -904,7 +919,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const testBtn = document.getElementById('apikey-test-btn');
 
       if (!key) {
-        statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-rose-950/30 border-rose-800 text-rose-300';
+        statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/30 border-rose-800 text-rose-300';
         statusBox.innerText = '⚠️ 請先輸入 API Key 再進行測試！';
         statusBox.classList.remove('hidden');
         return;
@@ -912,32 +927,43 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       testBtn.disabled = true;
       testBtn.innerText = '連線測試中...';
-      statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-slate-800 border-slate-700 text-amber-400';
-      statusBox.innerText = '⏳ 正在向 Google AI 伺服器發送 Ping 請求...';
+      statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-slate-800 border-slate-700 text-amber-400';
+      statusBox.innerText = '⏳ 正在向 Google AI 伺服器 (Gemini 1.5 Flash) 發送驗證請求...';
       statusBox.classList.remove('hidden');
 
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(key)}`;
         const response = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': key
+          },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Hello' }] }]
+            contents: [{ parts: [{ text: 'Ping' }] }]
           })
         });
 
         const data = await response.json();
         if (response.ok && data.candidates) {
-          statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-emerald-950/40 border-emerald-800 text-emerald-300';
-          statusBox.innerHTML = '✅ <b>連線成功 (HTTP 200)！</b><br>此 API Key 完全合法且可正常使用，請點擊「儲存並啟用」。';
+          statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-emerald-950/40 border-emerald-800 text-emerald-300';
+          statusBox.innerHTML = '✅ <b>連線驗證成功 (HTTP 200)！</b><br>此 API Key 完全合法，請點擊右下角「💾 儲存並啟用」。';
         } else {
-          const errMsg = (data.error && data.error.message) ? data.error.message : 'HTTP ' + response.status;
-          statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-rose-950/40 border-rose-800 text-rose-300';
-          statusBox.innerHTML = `❌ <b>驗證失敗：</b>${errMsg}<br><br>💡 <b>提示：</b>請確認是在 <a href="https://aistudio.google.dev/apikey" target="_blank" class="underline text-amber-400">Google AI Studio</a> 建立的免費 Key（開頭通常為 <code>AIzaSy</code>）。`;
+          const errMsg = (data.error && data.error.message) ? data.error.message : ('HTTP ' + response.status);
+          statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300 space-y-1.5';
+          statusBox.innerHTML = `
+            <div class="font-bold text-rose-400">❌ Google 伺服器回傳錯誤：${errMsg}</div>
+            <div class="text-[11px] text-slate-300 leading-relaxed border-t border-rose-900/60 pt-1.5">
+              <b>排查步驟：</b><br>
+              1. 點擊輸入框右側「👁️」確認沒有少複製字元或誤貼其他內容。<br>
+              2. 請至 <a href="https://aistudio.google.dev/apikey" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio (點此建立)</a> 免費產生（開頭應為 <code>AIzaSy...</code>）。<br>
+              3. 請確認此金鑰未設定網域限制 (HTTP referrer restrictions) 阻擋。
+            </div>
+          `;
         }
       } catch (err) {
-        statusBox.className = 'text-xs font-mono p-2.5 rounded-lg border bg-rose-950/40 border-rose-800 text-rose-300';
-        statusBox.innerHTML = `❌ <b>網路連線失敗：</b>${err.message}`;
+        statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300';
+        statusBox.innerHTML = `❌ <b>網路請求失敗：</b>${err.message}<br>請確認瀏覽器未開啟阻擋跨域請求 (CORS) 或廣告外掛。`;
       } finally {
         testBtn.disabled = false;
         testBtn.innerText = '🔍 測試連線';
@@ -1172,7 +1198,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 計算首次提及報酬率
     function calculateReturnSinceFirstMention(ticker) {
       const tickerTweets = allTweets.filter(t => t.tickers.includes(ticker));
       const quote = stockQuotes[ticker];
@@ -1199,7 +1224,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       };
     }
 
-    // 1. 股價走勢與多空點位疊圖 (Chart.js)
     function renderPriceOverlayChart(ticker) {
       if (!ticker) return;
       const quote = stockQuotes[ticker];
@@ -1436,7 +1460,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (tvChartVisible) loadTradingViewWidget(ticker);
     }
 
-    // 3. 雙標的橫向深度對比矩陣
     function openCompareModal() {
       const modal = document.getElementById('compare-modal');
       const selectA = document.getElementById('compare-select-a');
@@ -1535,7 +1558,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       `).join('');
     }
 
-    // 2. 個股 AI 深度論點脈絡 Modal
     function openDeepDiveModal(ticker) {
       if (!ticker) return;
       const modal = document.getElementById('deepdive-modal');
@@ -1555,7 +1577,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const retData = calculateReturnSinceFirstMention(ticker);
       document.getElementById('modal-first-roi').innerText = retData ? `${retData.returnPct > 0 ? '+' : ''}${retData.returnPct}%` : '-';
 
-      // 產生論點故事 (Thesis Story)
       const bullCount = tickerTweets.filter(t => t.sentiment === 'Bullish').length;
       const bearCount = tickerTweets.filter(t => t.sentiment === 'Bearish').length;
       const storyEl = document.getElementById('modal-thesis-story');
@@ -1567,7 +1588,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       thesisText += ` 截至最新一次發布（<b>${latestMention.date}</b>），對該標的的定調為【<b>${latestMention.sentiment}</b>】，核心觀點為：「${latestMention.summary || latestMention.translation_zh || latestMention.text.slice(0, 90)}」。`;
       storyEl.innerHTML = thesisText;
 
-      // 挑選 3 大代表性里程碑
       const milestones = [];
       milestones.push({
         tag: '🚀 里程碑 1：首次關注起點 (Genesis)',
@@ -1858,10 +1878,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         const systemPrompt = `你是一位專業的美股社群量化情報分析專家，請基於以下【Burak Finance】社群情報與美股數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n【即時行情摘要】：\\n${contextTickers}\\n\\n【近期關鍵推文摘要】：\\n${contextTweets}\\n\\n使用者問題：${userQuery}`;
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${cleanKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(cleanKey)}`;
         const response = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey
+          },
           body: JSON.stringify({
             contents: [{ parts: [{ text: systemPrompt }] }]
           })
@@ -2055,7 +2078,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (抽屜排版與 API Key 測試彈窗已全面修復)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (密碼明暗切換與雙重認證標頭已就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
