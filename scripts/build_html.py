@@ -747,7 +747,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </form>
   </div>
 
-  <!-- 專屬 Gemini API Key 設定彈窗 (動態模型自動偵測) -->
+  <!-- 專屬 Gemini API Key 設定彈窗 (永遠相容最新模型) -->
   <div id="apikey-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -759,7 +759,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="space-y-2">
-        <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key (支援 AQ. 與 AIza 開頭)：</label>
+        <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key (格式為 AQ. 開頭)：</label>
         <div class="relative flex items-center">
           <input type="password" id="apikey-input" placeholder="AQ.Ab8RN..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-10 py-2.5 text-xs text-amber-400 font-mono focus:outline-none focus:border-amber-500" />
           <button type="button" onclick="toggleApiKeyVisibility()" id="apikey-eye-btn" class="absolute right-2.5 text-slate-400 hover:text-white text-sm p-1" title="顯示/隱藏金鑰">👁️</button>
@@ -912,90 +912,119 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('apikey-modal').classList.add('hidden');
     }
 
-    // ★【一勞永逸核心】：動態查詢 Google AI 伺服器目前可用的最新模型名單
+    // 計算模型版本權重分數（例如 gemini-3.6-flash -> 360 分, gemini-2.0 -> 200 分）
+    function getModelScore(modelName) {
+      let score = 0;
+      const lower = modelName.toLowerCase();
+      
+      const verMatch = lower.match(/gemini-(\d+(?:\.\d+)?)/);
+      if (verMatch) {
+        score += parseFloat(verMatch[1]) * 100;
+      }
+      if (lower.includes('flash')) score += 50;
+      if (lower.includes('pro')) score += 30;
+      if (lower.includes('preview')) score -= 5;
+      
+      return score;
+    }
+
+    // 動態向 Google 查詢最新可用模型並自動降冪排序
+    async function fetchOnlineGeminiModels(cleanKey) {
+      const listUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+      let models = [];
+      
+      const tryFetch = async (url, headers) => {
+        try {
+          const res = await fetch(url, { headers });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.models)) return data.models;
+          }
+        } catch (e) {}
+        return null;
+      };
+
+      let rawList = await tryFetch(listUrl, { 'x-goog-api-key': cleanKey });
+      if (!rawList) {
+        rawList = await tryFetch(`${listUrl}?key=${encodeURIComponent(cleanKey)}`, {});
+      }
+
+      if (rawList && rawList.length > 0) {
+        models = rawList
+          .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+          .map(m => m.name.replace(/^models\//, ''))
+          .filter(name => name.toLowerCase().includes('gemini') && !name.toLowerCase().includes('vision') && !name.toLowerCase().includes('embedding'));
+
+        models.sort((a, b) => getModelScore(b) - getModelScore(a));
+      }
+
+      // 預設高優先安全候選名單（以最新 3.6-flash 為第一順位）
+      const defaultCandidates = [
+        'gemini-3.6-flash',
+        'gemini-3.0-flash',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-exp',
+        'gemini-pro'
+      ];
+
+      return Array.from(new Set([...models, ...defaultCandidates]));
+    }
+
+    // 核心請求執行器：支援自動智慧輪詢與雙通道容錯
     async function executeGeminiRequest(key, promptText) {
       const cleanKey = key.trim().replace(/["'\\s]/g, '');
-      const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cleanKey)}`;
+      const candidateModels = await fetchOnlineGeminiModels(cleanKey);
+      
+      const bodyPayload = JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }]
+      });
 
-      try {
-        // 步驟 1：先向 Google 要目前線上的完整模型清單
-        let resList = await fetch(listModelsUrl, {
-          method: 'GET',
-          headers: { 'x-goog-api-key': cleanKey }
-        });
+      let lastError = '';
 
-        if (!resList.ok) {
-          // 備援：不帶 Header 純網址查詢
-          resList = await fetch(listModelsUrl);
+      for (const model of candidateModels) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+        // 管道 1：標準 x-goog-api-key 標頭傳遞
+        try {
+          const res1 = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': cleanKey
+            },
+            body: bodyPayload
+          });
+          const data1 = await res1.json();
+          if (res1.ok && data1.candidates) {
+            return { ok: true, data: data1, modelUsed: model };
+          }
+          if (data1.error && data1.error.message) {
+            lastError = `[${model}] ${data1.error.message}`;
+          }
+        } catch (err) {
+          lastError = err.message;
         }
 
-        const listData = await resList.json();
-
-        if (!resList.ok || !listData.models || !listData.models.length) {
-          const errDetail = (listData.error && listData.error.message) ? listData.error.message : '無法向 Google AI 取得可用模型清單';
-          return { ok: false, error: errDetail };
-        }
-
-        // 步驟 2：篩選出支援【對話生成 (generateContent)】的模型
-        const generateModels = listData.models.filter(m => 
-          m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent')
-        );
-
-        if (!generateModels.length) {
-          return { ok: false, error: '目前帳號可用的模型均不支援內容生成' };
-        }
-
-        // 步驟 3：智慧動態挑選最佳 Flash 模型（優先挑選 flash，若無則挑選 pro）
-        let targetModel = generateModels.find(m => m.name.includes('flash') && !m.name.includes('experimental') && !m.name.includes('legacy'));
-        if (!targetModel) {
-          targetModel = generateModels.find(m => m.name.includes('flash'));
-        }
-        if (!targetModel) {
-          targetModel = generateModels.find(m => m.name.includes('pro'));
-        }
-        if (!targetModel) {
-          targetModel = generateModels[0];
-        }
-
-        const modelName = targetModel.name; // 例如: "models/gemini-2.0-flash"
-
-        // 步驟 4：使用動態取得的最新模型發送生成請求
-        const generateUrl = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${encodeURIComponent(cleanKey)}`;
-        const bodyPayload = JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }]
-        });
-
-        let resGen = await fetch(generateUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': cleanKey
-          },
-          body: bodyPayload
-        });
-
-        let genData = await resGen.json();
-        if (!resGen.ok) {
-          // 備援請求
-          resGen = await fetch(generateUrl, {
+        // 管道 2：純 URL 參數備援
+        try {
+          const res2 = await fetch(`${url}?key=${encodeURIComponent(cleanKey)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: bodyPayload
           });
-          genData = await resGen.json();
+          const data2 = await res2.json();
+          if (res2.ok && data2.candidates) {
+            return { ok: true, data: data2, modelUsed: model };
+          }
+          if (data2.error && data2.error.message) {
+            lastError = `[${model}] ${data2.error.message}`;
+          }
+        } catch (err) {
+          lastError = err.message;
         }
-
-        if (resGen.ok && genData.candidates && genData.candidates.length) {
-          const cleanDisplayName = modelName.replace('models/', '');
-          return { ok: true, data: genData, modelUsed: cleanDisplayName };
-        } else {
-          const errDetail = (genData.error && genData.error.message) ? genData.error.message : '內容生成失敗';
-          return { ok: false, error: `[${modelName}] ${errDetail}` };
-        }
-
-      } catch (err) {
-        return { ok: false, error: `網路通訊異常：${err.message}` };
       }
+
+      return { ok: false, error: lastError || '所有候選模型連線皆失敗' };
     }
 
     async function testApiKeyConnection() {
@@ -1012,23 +1041,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
 
       testBtn.disabled = true;
-      testBtn.innerText = '連線測試中...';
+      testBtn.innerText = '動態尋找可用模型中...';
       statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-slate-800 border-slate-700 text-amber-400';
-      statusBox.innerText = '⏳ 正在自動動態查詢 Google AI 可用模型清單...';
+      statusBox.innerText = '⏳ 正在向 Google 伺服器動態檢索並驗證最新 Gemini 模型...';
       statusBox.classList.remove('hidden');
 
       const result = await executeGeminiRequest(key, 'Hi');
 
       if (result.ok) {
         statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-emerald-950/40 border-emerald-800 text-emerald-300';
-        statusBox.innerHTML = `✅ <b>連線驗證成功 (HTTP 200)！</b><br>動態偵測並已連結至最新模型：<b>${result.modelUsed}</b><br>請點擊「💾 儲存並啟用」。`;
+        statusBox.innerHTML = `✅ <b>連線驗證成功 (HTTP 200)！</b><br>已動態連線至最新可用模型：<b>${result.modelUsed}</b>。<br>請點擊右下角「💾 儲存並啟用」。`;
       } else {
         statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300 space-y-1.5';
         statusBox.innerHTML = `
           <div class="font-bold text-rose-400">❌ 驗證失敗：${result.error}</div>
           <div class="text-[11px] text-slate-300 leading-relaxed border-t border-rose-900/60 pt-1.5">
             <b>排查建議：</b><br>
-            1. 點擊輸入框右側「👁️」確認金鑰完整，無遺漏字元。<br>
+            1. 點擊輸入框右側「👁️」確認金鑰完整。<br>
             2. 請確認是在 <a href="https://aistudio.google.dev/" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio</a> 建立的 Key。
           </div>
         `;
@@ -1892,7 +1921,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 4. AI 智能對話助理
+    // 4. AI 智能對話助理 (動態模型適應與連線)
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -1936,7 +1965,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function queryGeminiAPI(userQuery) {
       const sendBtn = document.getElementById('chat-send-btn');
       sendBtn.disabled = true;
-      const loadingMsg = appendChatMessage('ai', '🌟 Gemini 正在動態辨識最佳模型並深入分析社群情報與基本面...');
+      const loadingMsg = appendChatMessage('ai', '🌟 Gemini 正在深入分析社群情報與基本面...');
 
       try {
         const contextTweets = allTweets.slice(0, 25).map(t => `[${t.date}] $${t.tickers.join(',$') || '大盤'} (${t.sentiment}): ${t.summary || t.text}`).join('\\n');
@@ -2129,7 +2158,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (Gemini 動態模型查詢與一勞永逸連線已全面建置完成)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (動態最新模型偵測已就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
