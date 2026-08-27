@@ -747,7 +747,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </form>
   </div>
 
-  <!-- 專屬 Gemini API Key 設定彈窗 (相容最新 AQ. 前綴格式) -->
+  <!-- 專屬 Gemini API Key 設定彈窗 (支援最新 Gemini 2.0 Flash) -->
   <div id="apikey-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -912,56 +912,65 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('apikey-modal').classList.add('hidden');
     }
 
-    // 發送請求核心：針對 AQ. 與舊版金鑰採用標準標頭傳遞
+    // 發送請求核心：支援 Gemini 2.0 Flash 與自動備援模型清單
     async function executeGeminiRequest(key, promptText) {
       const cleanKey = key.trim().replace(/["'\\s]/g, '');
-      const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+      const candidateModels = [
+        'gemini-2.0-flash',
+        'gemini-2.5-flash',
+        'gemini-1.5-flash-latest'
+      ];
+      
       const bodyPayload = JSON.stringify({
         contents: [{ parts: [{ text: promptText }] }]
       });
 
-      // 方式 1：標準 x-goog-api-key 標頭
-      try {
-        const res1 = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': cleanKey
-          },
-          body: bodyPayload
-        });
-        const data1 = await res1.json();
-        if (res1.ok && data1.candidates) {
-          return { ok: true, data: data1 };
-        }
-        
-        // 若標頭被瀏覽器外掛阻擋，採用方式 2 (純 URL 參數備援)
-        const res2 = await fetch(`${url}?key=${encodeURIComponent(cleanKey)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: bodyPayload
-        });
-        const data2 = await res2.json();
-        if (res2.ok && data2.candidates) {
-          return { ok: true, data: data2 };
+      let lastError = '';
+
+      for (const model of candidateModels) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+        // 策略 1：使用標準 x-goog-api-key 標頭
+        try {
+          const res1 = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': cleanKey
+            },
+            body: bodyPayload
+          });
+          const data1 = await res1.json();
+          if (res1.ok && data1.candidates) {
+            return { ok: true, data: data1, modelUsed: model };
+          }
+          if (data1.error && data1.error.message) {
+            lastError = `[${model}] ${data1.error.message}`;
+          }
+        } catch (err) {
+          lastError = err.message;
         }
 
-        return { ok: false, error: (data1.error && data1.error.message) || (data2.error && data2.error.message) || '驗證未通過' };
-      } catch (err) {
-        // 連線例外備援嘗試
+        // 策略 2：純 URL 參數備援
         try {
-          const res3 = await fetch(`${url}?key=${encodeURIComponent(cleanKey)}`, {
+          const res2 = await fetch(`${url}?key=${encodeURIComponent(cleanKey)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: bodyPayload
           });
-          const data3 = await res3.json();
-          if (res3.ok && data3.candidates) return { ok: true, data: data3 };
-          return { ok: false, error: data3.error ? data3.error.message : err.message };
-        } catch (innerErr) {
-          return { ok: false, error: err.message };
+          const data2 = await res2.json();
+          if (res2.ok && data2.candidates) {
+            return { ok: true, data: data2, modelUsed: model };
+          }
+          if (data2.error && data2.error.message) {
+            lastError = `[${model}] ${data2.error.message}`;
+          }
+        } catch (err) {
+          lastError = err.message;
         }
       }
+
+      return { ok: false, error: lastError || '所有候選模型連線皆失敗' };
     }
 
     async function testApiKeyConnection() {
@@ -980,14 +989,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       testBtn.disabled = true;
       testBtn.innerText = '連線測試中...';
       statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-slate-800 border-slate-700 text-amber-400';
-      statusBox.innerText = '⏳ 正在向 Google AI 伺服器 (Gemini 1.5 Flash) 驗證金鑰...';
+      statusBox.innerText = '⏳ 正在向 Google AI 伺服器 (Gemini 2.0 Flash) 驗證金鑰...';
       statusBox.classList.remove('hidden');
 
       const result = await executeGeminiRequest(key, 'Hi');
 
       if (result.ok) {
         statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-emerald-950/40 border-emerald-800 text-emerald-300';
-        statusBox.innerHTML = '✅ <b>連線驗證成功 (HTTP 200)！</b><br>此 AQ. 金鑰完全合法且具備 Gemini API 呼叫權限，請點擊「💾 儲存並啟用」。';
+        statusBox.innerHTML = `✅ <b>連線驗證成功 (HTTP 200)！</b><br>已成功連結 <b>${result.modelUsed}</b> 模型，請點擊「💾 儲存並啟用」。`;
       } else {
         statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300 space-y-1.5';
         statusBox.innerHTML = `
@@ -1858,7 +1867,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 4. AI 智能對話助理
+    // 4. AI 智能對話助理 (支援本機快速模式與 Gemini 2.0 Flash 雲端連線)
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -1914,7 +1923,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         if (result.ok && result.data.candidates && result.data.candidates[0] && result.data.candidates[0].content) {
           const aiResponseText = result.data.candidates[0].content.parts[0].text;
-          loadingMsg.innerHTML = `<b>Burak AI (Gemini 1.5 Flash)：</b><br>${aiResponseText.replace(/\\n/g, '<br>')}`;
+          loadingMsg.innerHTML = `<b>Burak AI (${result.modelUsed})：</b><br>${aiResponseText.replace(/\\n/g, '<br>')}`;
         } else {
           loadingMsg.innerHTML = `⚠️ Gemini API 回傳異常：<b>${result.error || '呼叫失敗'}</b><br><br>💡 <b>解決步驟：</b>請點擊右上角 <b>⚙️ 設定</b> 重新測試連線。`;
         }
@@ -2095,7 +2104,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (最新 AQ. 金鑰相容驗證已就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (Gemini 2.0 Flash 與多模型備援已就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
