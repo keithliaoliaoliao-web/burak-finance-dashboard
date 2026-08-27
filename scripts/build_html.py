@@ -707,7 +707,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 4. 浮動 AI 智能對話助理 (高度自適應與固定按鈕列) -->
+  <!-- 4. 浮動 AI 智能對話助理 -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -747,7 +747,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </form>
   </div>
 
-  <!-- 專屬 Gemini API Key 設定彈窗 (含 👁️ 密碼明暗切換與詳細診斷) -->
+  <!-- 專屬 Gemini API Key 設定彈窗 (相容最新 AQ. 前綴格式) -->
   <div id="apikey-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -759,14 +759,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="space-y-2">
-        <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key：</label>
+        <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key (格式通常為 AQ. 開頭)：</label>
         <div class="relative flex items-center">
-          <input type="password" id="apikey-input" placeholder="AIzaSy..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-10 py-2.5 text-xs text-amber-400 font-mono focus:outline-none focus:border-amber-500" />
+          <input type="password" id="apikey-input" placeholder="AQ.Ab8RN..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-10 py-2.5 text-xs text-amber-400 font-mono focus:outline-none focus:border-amber-500" />
           <button type="button" onclick="toggleApiKeyVisibility()" id="apikey-eye-btn" class="absolute right-2.5 text-slate-400 hover:text-white text-sm p-1" title="顯示/隱藏金鑰">👁️</button>
         </div>
         <p class="text-[11px] text-slate-400 leading-relaxed">
-          金鑰僅保存在本機瀏覽器（localStorage），不會上傳至伺服器。<br>
-          👉 請直接至 <a href="https://aistudio.google.dev/apikey" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio (點此開啟)</a> 免費取得（開頭應為 <code>AIzaSy</code>）。
+          金鑰僅保存在本機瀏覽器（localStorage），完全不經過第三方伺服器。<br>
+          👉 可至 <a href="https://aistudio.google.dev/" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio 首頁 (點此開啟)</a> 取得免費金鑰。
         </p>
       </div>
 
@@ -912,6 +912,58 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('apikey-modal').classList.add('hidden');
     }
 
+    // 發送請求核心：針對 AQ. 與舊版金鑰採用標準標頭傳遞
+    async function executeGeminiRequest(key, promptText) {
+      const cleanKey = key.trim().replace(/["'\\s]/g, '');
+      const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+      const bodyPayload = JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }]
+      });
+
+      // 方式 1：標準 x-goog-api-key 標頭
+      try {
+        const res1 = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey
+          },
+          body: bodyPayload
+        });
+        const data1 = await res1.json();
+        if (res1.ok && data1.candidates) {
+          return { ok: true, data: data1 };
+        }
+        
+        // 若標頭被瀏覽器外掛阻擋，採用方式 2 (純 URL 參數備援)
+        const res2 = await fetch(`${url}?key=${encodeURIComponent(cleanKey)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyPayload
+        });
+        const data2 = await res2.json();
+        if (res2.ok && data2.candidates) {
+          return { ok: true, data: data2 };
+        }
+
+        return { ok: false, error: (data1.error && data1.error.message) || (data2.error && data2.error.message) || '驗證未通過' };
+      } catch (err) {
+        // 連線例外備援嘗試
+        try {
+          const res3 = await fetch(`${url}?key=${encodeURIComponent(cleanKey)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyPayload
+          });
+          const data3 = await res3.json();
+          if (res3.ok && data3.candidates) return { ok: true, data: data3 };
+          return { ok: false, error: data3.error ? data3.error.message : err.message };
+        } catch (innerErr) {
+          return { ok: false, error: err.message };
+        }
+      }
+    }
+
     async function testApiKeyConnection() {
       const input = document.getElementById('apikey-input');
       const key = input.value.trim().replace(/["'\\s]/g, '');
@@ -928,46 +980,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       testBtn.disabled = true;
       testBtn.innerText = '連線測試中...';
       statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-slate-800 border-slate-700 text-amber-400';
-      statusBox.innerText = '⏳ 正在向 Google AI 伺服器 (Gemini 1.5 Flash) 發送驗證請求...';
+      statusBox.innerText = '⏳ 正在向 Google AI 伺服器 (Gemini 1.5 Flash) 驗證金鑰...';
       statusBox.classList.remove('hidden');
 
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(key)}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': key
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Ping' }] }]
-          })
-        });
+      const result = await executeGeminiRequest(key, 'Hi');
 
-        const data = await response.json();
-        if (response.ok && data.candidates) {
-          statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-emerald-950/40 border-emerald-800 text-emerald-300';
-          statusBox.innerHTML = '✅ <b>連線驗證成功 (HTTP 200)！</b><br>此 API Key 完全合法，請點擊右下角「💾 儲存並啟用」。';
-        } else {
-          const errMsg = (data.error && data.error.message) ? data.error.message : ('HTTP ' + response.status);
-          statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300 space-y-1.5';
-          statusBox.innerHTML = `
-            <div class="font-bold text-rose-400">❌ Google 伺服器回傳錯誤：${errMsg}</div>
-            <div class="text-[11px] text-slate-300 leading-relaxed border-t border-rose-900/60 pt-1.5">
-              <b>排查步驟：</b><br>
-              1. 點擊輸入框右側「👁️」確認沒有少複製字元或誤貼其他內容。<br>
-              2. 請至 <a href="https://aistudio.google.dev/apikey" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio (點此建立)</a> 免費產生（開頭應為 <code>AIzaSy...</code>）。<br>
-              3. 請確認此金鑰未設定網域限制 (HTTP referrer restrictions) 阻擋。
-            </div>
-          `;
-        }
-      } catch (err) {
-        statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300';
-        statusBox.innerHTML = `❌ <b>網路請求失敗：</b>${err.message}<br>請確認瀏覽器未開啟阻擋跨域請求 (CORS) 或廣告外掛。`;
-      } finally {
-        testBtn.disabled = false;
-        testBtn.innerText = '🔍 測試連線';
+      if (result.ok) {
+        statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-emerald-950/40 border-emerald-800 text-emerald-300';
+        statusBox.innerHTML = '✅ <b>連線驗證成功 (HTTP 200)！</b><br>此 AQ. 金鑰完全合法且具備 Gemini API 呼叫權限，請點擊「💾 儲存並啟用」。';
+      } else {
+        statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300 space-y-1.5';
+        statusBox.innerHTML = `
+          <div class="font-bold text-rose-400">❌ 驗證失敗：${result.error}</div>
+          <div class="text-[11px] text-slate-300 leading-relaxed border-t border-rose-900/60 pt-1.5">
+            <b>排查建議：</b><br>
+            1. 點擊輸入框右側「👁️」確認金鑰完整，無遺漏字元。<br>
+            2. 請確認是在 <a href="https://aistudio.google.dev/" target="_blank" class="text-amber-400 underline font-bold">Google AI Studio</a> 建立的 Key。
+          </div>
+        `;
       }
+
+      testBtn.disabled = false;
+      testBtn.innerText = '🔍 測試連線';
     }
 
     function saveApiKeyModal() {
@@ -978,7 +1012,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         localStorage.setItem('burak_gemini_api_key', key);
         updateChatModeBadge();
         closeApiKeyModal();
-        alert('✅ Gemini API Key 已成功儲存並切換至【Gemini 雲端連線模式】！');
+        alert('✅ Gemini API Key 已成功儲存！已啟用【Gemini 雲端連線模式】。');
       } else {
         clearApiKey();
       }
@@ -1824,7 +1858,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 4. AI 智能對話助理 (支援本機解析與 Gemini 1.5 Flash 雲端 API)
+    // 4. AI 智能對話助理
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -1871,35 +1905,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const loadingMsg = appendChatMessage('ai', '🌟 Gemini 正在深入分析社群情報與基本面...');
 
       try {
-        const cleanKey = geminiApiKey.replace(/["'\\s]/g, '');
-
         const contextTweets = allTweets.slice(0, 25).map(t => `[${t.date}] $${t.tickers.join(',$') || '大盤'} (${t.sentiment}): ${t.summary || t.text}`).join('\\n');
         const contextTickers = Object.entries(stockQuotes).slice(0, 20).map(([k, v]) => `$${k}: $${v.price || '-'} (PE: ${v.forwardPE || '-'}, 板塊: ${v.sector})`).join('; ');
 
         const systemPrompt = `你是一位專業的美股社群量化情報分析專家，請基於以下【Burak Finance】社群情報與美股數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n【即時行情摘要】：\\n${contextTickers}\\n\\n【近期關鍵推文摘要】：\\n${contextTweets}\\n\\n使用者問題：${userQuery}`;
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(cleanKey)}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': cleanKey
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: systemPrompt }] }]
-          })
-        });
+        const result = await executeGeminiRequest(geminiApiKey, systemPrompt);
 
-        const data = await response.json();
-        if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-          const aiResponseText = data.candidates[0].content.parts[0].text;
+        if (result.ok && result.data.candidates && result.data.candidates[0] && result.data.candidates[0].content) {
+          const aiResponseText = result.data.candidates[0].content.parts[0].text;
           loadingMsg.innerHTML = `<b>Burak AI (Gemini 1.5 Flash)：</b><br>${aiResponseText.replace(/\\n/g, '<br>')}`;
         } else {
-          let errorDetail = 'API key 無效或權限不符。';
-          if (data.error && data.error.message) {
-            errorDetail = data.error.message;
-          }
-          loadingMsg.innerHTML = `⚠️ Gemini API 回傳異常：<b>${errorDetail}</b><br><br>💡 <b>解決步驟：</b>請點擊右上角 <b>⚙️ 設定</b> 重新輸入並點擊「🔍 測試連線」。`;
+          loadingMsg.innerHTML = `⚠️ Gemini API 回傳異常：<b>${result.error || '呼叫失敗'}</b><br><br>💡 <b>解決步驟：</b>請點擊右上角 <b>⚙️ 設定</b> 重新測試連線。`;
         }
       } catch (err) {
         console.error('Gemini API 請求失敗:', err);
@@ -2078,7 +2095,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (密碼明暗切換與雙重認證標頭已就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (最新 AQ. 金鑰相容驗證已就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
