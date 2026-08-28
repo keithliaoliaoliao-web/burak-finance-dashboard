@@ -1993,5 +1993,30 @@
     "sentiment": "Bullish",
     "summary": "輝達盤前大漲6.8%早有跡象",
     "translation_zh": "$NVDA 盤前上漲 6.8%。早就出現跡象了。https://t.co/ttyK9lrR5Q"
+  },
+  "2093453569823224131": {
+    "sentiment": "Bullish",
+    "summary": "營收七季爆發成長看好後市",
+    "translation_zh": "他們說 $NBIS 是一家糟糕的公司。七個季度內營收從 3,200 萬美元成長到 5.82 億美元。好吧，兄弟。"
+  },
+  "2093429424473489689": {
+    "sentiment": "Neutral",
+    "summary": "疑惑股價今日竟能逆勢上漲",
+    "translation_zh": "$SPCX 今天怎麼可能是上漲（收綠）的？"
+  },
+  "2093273768554648056": {
+    "sentiment": "Bearish",
+    "summary": "今日股價慘遭重挫表現極差",
+    "translation_zh": "$SIVE 今天絕對是慘遭重挫 😟"
+  },
+  "2093248497499750486": {
+    "sentiment": "Bullish",
+    "summary": "換股至強勢標的為明智之舉",
+    "translation_zh": "賣出 $IREN 改買 $NBIS 是個明智的決定。有時候你必須將資金輪轉至型態更強勁的標的中。"
+  },
+  "2093169370641899550": {
+    "sentiment": "Bullish",
+    "summary": "業績優異調升財測盤後卻大跌",
+    "translation_zh": "$MRVL 展現了優質 AI 基礎建設股應有的表現。成長 37%，資料中心增長 46%，調升財測。然而盤後股價仍重挫約 7%。"
   }
 }
