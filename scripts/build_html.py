@@ -345,7 +345,6 @@ def fetch_stock_quotes_and_fundamentals(tickers):
 
             sector_name = resolve_sector(symbol, info)
 
-            # 擷取 1 年歷史日 K 資料
             history_data = []
             try:
                 hist = ticker_obj.history(period="1y", interval="1d")
@@ -707,14 +706,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 4. 浮動 AI 智能對話助理 (高度自適應與固定按鈕列) -->
+  <!-- 4. 浮動 AI 智能對話助理 (高度自適應、流式打字機與多輪記憶) -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
     </button>
   </div>
 
-  <div id="ai-chat-drawer" class="fixed bottom-20 right-4 sm:right-6 z-50 w-[94vw] sm:w-[450px] max-h-[85vh] h-[min(520px,calc(100vh-120px))] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col">
+  <div id="ai-chat-drawer" class="fixed bottom-20 right-4 sm:right-6 z-50 w-[94vw] sm:w-[460px] max-h-[85vh] h-[min(530px,calc(100vh-120px))] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col">
     <!-- 頂部標題列 -->
     <div class="p-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
       <div class="flex items-center gap-2 min-w-0">
@@ -723,6 +722,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span id="chat-mode-badge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 truncate">⚡ 本機快速模式</span>
       </div>
       <div class="flex items-center gap-1.5 shrink-0">
+        <button onclick="clearChatHistory()" class="text-slate-400 hover:text-amber-400 p-1 text-xs rounded hover:bg-slate-800 transition" title="清空對話歷史 (開啟新話題)">🧹</button>
         <button onclick="openApiKeyModal()" class="text-slate-400 hover:text-amber-400 p-1 text-xs rounded hover:bg-slate-800 transition" title="設定 Gemini API Key">⚙️</button>
         <button onclick="toggleChatDrawer()" class="text-slate-400 hover:text-white font-bold p-1 text-xs rounded hover:bg-slate-800 transition">✕</button>
       </div>
@@ -732,7 +732,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs leading-relaxed">
       <div class="bg-slate-800/80 border border-slate-700/70 p-3.5 rounded-xl text-slate-200 space-y-2.5">
         <div class="font-semibold text-slate-100 flex items-center gap-1.5">
-          <span>👋</span> 你好！我是 Burak AI 助理，已整合大盤情報與最新模型：
+          <span>👋</span> 你好！我是 Burak AI 助理，已支援【流式打字生成】與【多輪連續追問】：
         </div>
         
         <!-- 動態雙排快捷問答區 -->
@@ -742,8 +742,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- 輸入列 -->
     <form onsubmit="handleChatSubmit(event)" class="p-2.5 bg-slate-950 border-t border-slate-800 flex gap-2 shrink-0">
-      <input type="text" id="chat-input" placeholder="輸入問題（例如：算力板塊多空總覽、分析 $NVDA）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
-      <button type="submit" id="chat-send-btn" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition">發送</button>
+      <input type="text" id="chat-input" placeholder="輸入問題（支援連續追問，如：分析 $NVDA、那 $AMD 呢？）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
+      <button type="submit" id="chat-send-btn" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition flex items-center justify-center">發送</button>
     </form>
   </div>
 
@@ -799,7 +799,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <button onclick="closeDeepDiveModal()" class="text-slate-400 hover:text-white text-xl p-1 font-bold">✕</button>
       </div>
 
-      <!-- 統計摘要列 -->
       <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs font-mono">
         <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
           <div class="text-slate-400">首次提及時間</div>
@@ -819,7 +818,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- 投資故事脈絡 -->
       <div class="bg-amber-950/20 border border-amber-500/30 p-4 rounded-xl space-y-2">
         <h4 class="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
           <span>📖</span> 投資論點演變故事 (Thesis Story)
@@ -829,7 +827,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </p>
       </div>
 
-      <!-- 3 大代表性里程碑 -->
       <div>
         <h4 class="text-sm font-bold text-slate-200 flex items-center gap-2 mb-3">
           📌 3 大關鍵里程碑 (Key Milestones)
@@ -837,7 +834,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="space-y-3" id="modal-key-milestones"></div>
       </div>
 
-      <!-- 歷史立場軌跡 -->
       <div>
         <h4 class="text-sm font-bold text-slate-200 flex items-center gap-2 mb-3">
           ⏳ 立場變化與歷史軌跡
@@ -845,7 +841,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="space-y-2 max-h-44 overflow-y-auto pr-1" id="modal-timeline"></div>
       </div>
 
-      <!-- 歷史風險警戒 -->
       <div>
         <h4 class="text-sm font-bold text-rose-400 flex items-center gap-2 mb-3">
           ⚠️ 曾提及的風險與疑慮警語
@@ -876,15 +871,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     let clientTranslations = JSON.parse(localStorage.getItem('burak_trans_cache') || '{}');
     let geminiApiKey = localStorage.getItem('burak_gemini_api_key') || '';
 
+    // 方向一核心：多輪對話歷史陣列 (Multi-turn Chat History)
+    let chatContextHistory = [];
+
     function updateChatModeBadge() {
       const badge = document.getElementById('chat-mode-badge');
       if (geminiApiKey) {
-        badge.innerText = '🌟 Gemini 雲端連線';
+        badge.innerText = '🌟 Gemini 串流連線';
         badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 truncate';
       } else {
         badge.innerText = '⚡ 本機快速模式';
         badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 truncate';
       }
+    }
+
+    function clearChatHistory() {
+      chatContextHistory = [];
+      const container = document.getElementById('chat-messages');
+      const firstWelcome = container.firstElementChild;
+      container.innerHTML = '';
+      if (firstWelcome) container.appendChild(firstWelcome);
+      appendChatMessage('ai', '🧹 對話歷史已清除，已開啟全新討論主題！');
     }
 
     function toggleApiKeyVisibility() {
@@ -912,7 +919,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('apikey-modal').classList.add('hidden');
     }
 
-    // 計算模型版本權重分數
     function getModelScore(modelName) {
       let score = 0;
       const lower = modelName.toLowerCase();
@@ -926,7 +932,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return score;
     }
 
-    // 動態向 Google 查詢最新可用模型並自動降冪排序
     async function fetchOnlineGeminiModels(cleanKey) {
       const listUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
       let models = [];
@@ -967,22 +972,102 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return Array.from(new Set([...models, ...defaultCandidates]));
     }
 
-    // 核心請求執行器
-    async function executeGeminiRequest(key, promptText) {
-      const cleanKey = key.trim().replace(/["'\\s]/g, '');
-      const candidateModels = await fetchOnlineGeminiModels(cleanKey);
+    // 格式化輸出文字（輕量 Markdown 轉 HTML）
+    function formatMarkdown(text) {
+      if (!text) return '';
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>')
+        .replace(/\\*(.*?)\\*/g, '<i>$1</i>')
+        .replace(/`([^`]+)`/g, '<code class="bg-slate-800 px-1 py-0.5 rounded text-amber-300 font-mono text-[11px]">$1</code>')
+        .replace(/^\\s*[-*•]\\s+(.*)$/gm, '• $1')
+        .replace(/\\n/g, '<br>');
+    }
+
+    // 方向一核心：智慧情報動態檢索 (Smart Context Retrieval)
+    function buildSmartContext(query) {
+      const qUpper = query.toUpperCase();
       
-      const bodyPayload = JSON.stringify({
-        contents: [{ parts: [{ text: promptText }] }]
+      // 偵測問題中提及的美股代號
+      const mentionedTickers = Object.keys(stockQuotes).filter(sym => {
+        const regex = new RegExp(`\\\\b\\\\$?${sym}\\\\b`, 'i');
+        return regex.test(query);
       });
 
+      let selectedTweets = [];
+      let selectedQuotes = [];
+
+      if (mentionedTickers.length > 0) {
+        // 優先抓取該標的歷史推文（最多 20 則）
+        const tickerTweets = allTweets.filter(t => t.tickers.some(s => mentionedTickers.includes(s))).slice(0, 20);
+        selectedTweets.push(...tickerTweets);
+
+        // 補上對應即時估值
+        mentionedTickers.forEach(sym => {
+          const q = stockQuotes[sym];
+          if (q) selectedQuotes.push(`$${sym}: 現價 $${q.price || '-'} (漲跌幅: ${q.changePct || 0}%, PE: ${q.forwardPE || '-'}, PS: ${q.priceToSales || '-'}, 板塊: ${q.sector || '科技'}, 財報: ${q.earningsDate || '未定'})`);
+        });
+      }
+
+      // 補足最新推文至 25 則
+      allTweets.slice(0, 25).forEach(t => {
+        if (!selectedTweets.some(item => item.id === t.id) && selectedTweets.length < 25) {
+          selectedTweets.push(t);
+        }
+      });
+
+      // 補足熱門標的行情
+      if (selectedQuotes.length < 15) {
+        Object.entries(stockQuotes).slice(0, 15).forEach(([k, v]) => {
+          const str = `$${k}: $${v.price || '-'} (PE: ${v.forwardPE || '-'}, 板塊: ${v.sector || '科技'})`;
+          if (!selectedQuotes.includes(str)) selectedQuotes.push(str);
+        });
+      }
+
+      const tweetsText = selectedTweets.map(t => `[${t.date}] $${t.tickers.join(',$') || '大盤'} (${t.sentiment}): ${t.summary || t.text}`).join('\\n');
+      const quotesText = selectedQuotes.join('; ');
+
+      return `【即時行情摘要】：\\n${quotesText}\\n\\n【相關焦點情報與推文摘要】：\\n${tweetsText}`;
+    }
+
+    // 方向一核心：SSE 流式傳輸與多輪對話請求器 (Streaming Request with Fallback)
+    async function executeGeminiStreamRequest(key, userText, onChunk) {
+      const cleanKey = key.trim().replace(/["'\\s]/g, '');
+      const candidateModels = await fetchOnlineGeminiModels(cleanKey);
+
+      // 動態組裝提示詞與多輪上下文
+      const smartContext = buildSmartContext(userText);
+      const systemInstructionText = `你是一位專業的美股社群量化情報分析專家，請基於以下【Burak Finance】社群情報與美股數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n${smartContext}`;
+
+      // 建立 Gemini 標準 contents 結構 (包含最近 3 輪歷史對話)
+      const contentsPayload = [];
+      
+      // 第一輪帶入系統上下文
+      if (chatContextHistory.length === 0) {
+        contentsPayload.push({
+          role: 'user',
+          parts: [{ text: `${systemInstructionText}\\n\\n使用者問題：${userText}` }]
+        });
+      } else {
+        // 多輪模式：取最近 6 則訊息
+        const recentHistory = chatContextHistory.slice(-6);
+        recentHistory.forEach(item => contentsPayload.push(item));
+        contentsPayload.push({
+          role: 'user',
+          parts: [{ text: `(參考最新市場情報與推文)\\n${smartContext}\\n\\n使用者最新問題：${userText}` }]
+        });
+      }
+
+      const bodyPayload = JSON.stringify({ contents: contentsPayload });
       let lastError = '';
 
       for (const model of candidateModels) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
 
         try {
-          const res1 = await fetch(url, {
+          const response = await fetch(streamUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -990,36 +1075,73 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             },
             body: bodyPayload
           });
-          const data1 = await res1.json();
-          if (res1.ok && data1.candidates) {
-            return { ok: true, data: data1, modelUsed: model };
+
+          if (response.ok && response.body) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            let fullText = '';
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\\n');
+              buffer = lines.pop() || ''; // 保留未完成的行
+
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('data: ')) {
+                  const jsonStr = trimmed.slice(6);
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    if (parsed.candidates && parsed.candidates[0] && parsed.candidates[0].content) {
+                      const chunkText = parsed.candidates[0].content.parts[0].text || '';
+                      fullText += chunkText;
+                      if (onChunk) onChunk(fullText, model);
+                    }
+                  } catch (jsonErr) {}
+                }
+              }
+            }
+
+            if (fullText) {
+              // 記錄多輪對話歷史
+              chatContextHistory.push({ role: 'user', parts: [{ text: userText }] });
+              chatContextHistory.push({ role: 'model', parts: [{ text: fullText }] });
+              return { ok: true, fullText: fullText, modelUsed: model };
+            }
           }
-          if (data1.error && data1.error.message) {
-            lastError = `[${model}] ${data1.error.message}`;
+
+          const errData = await response.json().catch(() => ({}));
+          if (errData.error && errData.error.message) {
+            lastError = `[${model}] ${errData.error.message}`;
           }
-        } catch (err) {
-          lastError = err.message;
+        } catch (fetchErr) {
+          lastError = fetchErr.message;
         }
 
+        // 串流失敗時的單次請求備援
         try {
-          const res2 = await fetch(`${url}?key=${encodeURIComponent(cleanKey)}`, {
+          const normalUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+          const normalRes = await fetch(normalUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cleanKey },
             body: bodyPayload
           });
-          const data2 = await res2.json();
-          if (res2.ok && data2.candidates) {
-            return { ok: true, data: data2, modelUsed: model };
+          const normalData = await normalRes.json();
+          if (normalRes.ok && normalData.candidates) {
+            const text = normalData.candidates[0].content.parts[0].text;
+            if (onChunk) onChunk(text, model);
+            chatContextHistory.push({ role: 'user', parts: [{ text: userText }] });
+            chatContextHistory.push({ role: 'model', parts: [{ text: text }] });
+            return { ok: true, fullText: text, modelUsed: model };
           }
-          if (data2.error && data2.error.message) {
-            lastError = `[${model}] ${data2.error.message}`;
-          }
-        } catch (err) {
-          lastError = err.message;
-        }
+        } catch (normalErr) {}
       }
 
-      return { ok: false, error: lastError || '所有候選模型連線皆失敗' };
+      return { ok: false, error: lastError || '連線逾時，請檢查金鑰或網路。' };
     }
 
     async function testApiKeyConnection() {
@@ -1036,16 +1158,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
 
       testBtn.disabled = true;
-      testBtn.innerText = '動態尋找可用模型中...';
+      testBtn.innerText = '串流連線測試中...';
       statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-slate-800 border-slate-700 text-amber-400';
-      statusBox.innerText = '⏳ 正在向 Google 伺服器動態檢索並驗證最新 Gemini 模型...';
+      statusBox.innerText = '⏳ 正在向 Google 伺服器進行 SSE 串流連線與最新模型匹配...';
       statusBox.classList.remove('hidden');
 
-      const result = await executeGeminiRequest(key, 'Hi');
+      const result = await executeGeminiStreamRequest(key, '測試連線，請回覆 OK。', null);
 
       if (result.ok) {
         statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-emerald-950/40 border-emerald-800 text-emerald-300';
-        statusBox.innerHTML = `✅ <b>連線驗證成功 (HTTP 200)！</b><br>已動態連線至最新可用模型：<b>${result.modelUsed}</b>。<br>請點擊右下角「💾 儲存並啟用」。`;
+        statusBox.innerHTML = `✅ <b>SSE 流式連線驗證成功 (HTTP 200)！</b><br>已成功匹配最新模型：<b>${result.modelUsed}</b>。<br>請點擊右下角「💾 儲存並啟用」。`;
       } else {
         statusBox.className = 'text-xs font-mono p-3 rounded-xl border bg-rose-950/40 border-rose-800 text-rose-300 space-y-1.5';
         statusBox.innerHTML = `
@@ -1922,12 +2044,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 動態雙排快捷問答按鈕生成器 (大盤策略 + 個股情境感知)
+    // 雙排動態快捷問答按鈕生成器 (第一排: 市場量化策略, 第二排: 個股深鑽與情境感知)
     function renderQuickAskButtons() {
       const container = document.getElementById('quick-ask-container');
       if (!container) return;
 
-      // 第一排：功能型量化查詢（全局市場掃描）
       const row1 = [
         { label: '📅 今日日報重點', query: '今日日報' },
         { label: '🚀 目前立場最偏多標的', query: '偏多標的' },
@@ -1936,14 +2057,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         { label: '🧠 AI 算力板塊多空總覽', query: 'AI 算力板塊' }
       ];
 
-      // 第二排：個股深鑽（情境感知）
       const row2 = [];
       if (currentTicker) {
         row2.push({ label: `🎯 深度診斷 $${currentTicker}`, query: `深度分析 $${currentTicker}` });
         row2.push({ label: `⚠️ $${currentTicker} 歷史風險警語`, query: `$${currentTicker} 風險` });
       }
 
-      // 取得全域前 2 大熱門標的補充
       const viewTweets = getFilteredByView(allTweets);
       const counts = {};
       viewTweets.forEach(t => t.tickers.forEach(s => counts[s] = (counts[s] || 0) + 1));
@@ -1986,7 +2105,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       `;
     }
 
-    // 4. AI 智能對話助理 (支援本機解析與 Gemini 雲端連線)
+    // AI 對話抽屜管理
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -2001,8 +2120,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const isUser = sender === 'user';
       const msgDiv = document.createElement('div');
       msgDiv.className = isUser 
-        ? 'bg-amber-500/20 text-amber-200 border border-amber-500/30 p-2.5 rounded-xl ml-6'
-        : 'bg-slate-800/90 text-slate-200 border border-slate-700/80 p-3 rounded-xl mr-4 space-y-1.5';
+        ? 'bg-amber-500/20 text-amber-200 border border-amber-500/30 p-2.5 rounded-xl ml-6 font-medium'
+        : 'bg-slate-800/90 text-slate-200 border border-slate-700/80 p-3.5 rounded-xl mr-4 space-y-1.5 shadow-sm';
       msgDiv.innerHTML = isUser ? `<b>你：</b>${htmlContent}` : `<b>Burak AI 助理：</b><br>${htmlContent}`;
       container.appendChild(msgDiv);
       container.scrollTop = container.scrollHeight;
@@ -2030,33 +2149,34 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    // 方向一核心：Gemini 雲端串流查詢執行函式
     async function queryGeminiAPI(userQuery) {
       const sendBtn = document.getElementById('chat-send-btn');
       sendBtn.disabled = true;
-      const loadingMsg = appendChatMessage('ai', '🌟 Gemini 正在深入分析社群情報與基本面...');
+      sendBtn.innerText = '生成中...';
+
+      const botMsgDiv = appendChatMessage('ai', '<span class="animate-pulse text-amber-400">🌟 正在連接最新模型，解析市場情報與歷史脈絡...</span>');
+      const messagesContainer = document.getElementById('chat-messages');
 
       try {
-        const contextTweets = allTweets.slice(0, 25).map(t => `[${t.date}] $${t.tickers.join(',$') || '大盤'} (${t.sentiment}): ${t.summary || t.text}`).join('\\n');
-        const contextTickers = Object.entries(stockQuotes).slice(0, 20).map(([k, v]) => `$${k}: $${v.price || '-'} (PE: ${v.forwardPE || '-'}, 板塊: ${v.sector})`).join('; ');
+        const result = await executeGeminiStreamRequest(geminiApiKey, userQuery, (currentStreamText, modelUsed) => {
+          botMsgDiv.innerHTML = `<b>Burak AI (${modelUsed})：</b><br>${formatMarkdown(currentStreamText)}`;
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
 
-        const systemPrompt = `你是一位專業的美股社群量化情報分析專家，請基於以下【Burak Finance】社群情報與美股數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n【即時行情摘要】：\\n${contextTickers}\\n\\n【近期關鍵推文摘要】：\\n${contextTweets}\\n\\n使用者問題：${userQuery}`;
-
-        const result = await executeGeminiRequest(geminiApiKey, systemPrompt);
-
-        if (result.ok && result.data.candidates && result.data.candidates[0] && result.data.candidates[0].content) {
-          const aiResponseText = result.data.candidates[0].content.parts[0].text;
-          loadingMsg.innerHTML = `<b>Burak AI (${result.modelUsed})：</b><br>${aiResponseText.replace(/\\n/g, '<br>')}`;
-        } else {
-          loadingMsg.innerHTML = `⚠️ Gemini API 回傳異常：<b>${result.error || '呼叫失敗'}</b><br><br>💡 <b>解決步驟：</b>請點擊右上角 <b>⚙️ 設定</b> 重新測試連線。`;
+        if (!result.ok) {
+          botMsgDiv.innerHTML = `⚠️ Gemini API 串流回傳異常：<b>${result.error || '連線中斷'}</b><br><br>💡 <b>解決步驟：</b>可點擊右上角 <b>⚙️ 設定</b> 重新測試連線，或點擊 <b>🧹</b> 開啟新話題。`;
         }
       } catch (err) {
-        console.error('Gemini API 請求失敗:', err);
-        loadingMsg.innerHTML = `⚠️ 連線至 Gemini API 失敗 (${err.message})。`;
+        console.error('串流處理失敗:', err);
+        botMsgDiv.innerHTML = `⚠️ 連線至 Gemini API 失敗 (${err.message})。`;
       } finally {
         sendBtn.disabled = false;
+        sendBtn.innerText = '發送';
       }
     }
 
+    // 本機快速模式意圖解析器
     function processLocalChatIntent(query) {
       const q = query.toUpperCase();
       
@@ -2253,7 +2373,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (雙排動態快捷問答已就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (方向一：SSE 串流、多輪記憶與智慧上下文檢索已全面就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
