@@ -420,6 +420,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #475569; }
     .gold-glow { box-shadow: 0 0 25px rgba(245, 158, 11, 0.12); }
+    @keyframes tweetHighlight {
+      0% { box-shadow: 0 0 0 2px #f59e0b, 0 0 25px rgba(245, 158, 11, 0.4); background-color: rgba(120, 53, 15, 0.35); }
+      100% { box-shadow: none; background-color: rgba(15, 23, 42, 0.6); }
+    }
+    .highlight-tweet-anim {
+      animation: tweetHighlight 2.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
   </style>
 </head>
 <body class="text-slate-200 min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white">
@@ -561,7 +568,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               🧠 AI 論點脈絡
             </button>
             <button onclick="togglePriceOverlayChart()" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 transition">
-              📉 <span id="price-chart-btn-text">1年走勢與多空點位</span>
+              📉 <span id="price-chart-btn-text">走勢與多空點位</span>
             </button>
             <button onclick="toggleTvChart()" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 transition">
               📊 <span id="tv-chart-btn-text">即時 K 線</span>
@@ -606,21 +613,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- 1. 首次提及以來股價走勢與社群多空點位疊圖 -->
+      <!-- 方向二核心升級：走勢疊圖容器 (含 1M/3M/6M/1Y 時間軸與點擊提示) -->
       <div id="price-overlay-chart-wrapper" class="border-t border-slate-800/80 pt-4">
-        <div class="text-xs font-semibold text-slate-400 mb-2 flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <span>📉 1 年歷史股價走勢與 Burak 社群發文點位疊加</span>
-            <div class="flex items-center gap-2 text-[10px] font-mono ml-2">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-xs font-semibold text-slate-300">📉 歷史走勢與 Burak 點位疊圖</span>
+            <div class="flex items-center gap-2 text-[10px] font-mono">
               <span class="inline-flex items-center gap-1 text-emerald-400"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>看多</span>
               <span class="inline-flex items-center gap-1 text-rose-400"><span class="w-2 h-2 rounded-full bg-rose-500"></span>看空</span>
               <span class="inline-flex items-center gap-1 text-blue-400"><span class="w-2 h-2 rounded-full bg-blue-500"></span>中立</span>
             </div>
           </div>
-          <span class="text-[11px] text-amber-400 font-mono hidden sm:inline">懸停圓點查看推文摘要與觀點</span>
+
+          <!-- 方向二：時間軸週期切換按鈕群組 -->
+          <div class="flex items-center gap-1 bg-slate-950/80 p-0.5 rounded-lg border border-slate-800 self-start sm:self-auto">
+            <button onclick="setChartRange('1M')" class="chart-range-btn px-2.5 py-0.5 rounded-md text-[11px] font-mono text-slate-400 hover:text-white transition" data-range="1M">1M</button>
+            <button onclick="setChartRange('3M')" class="chart-range-btn px-2.5 py-0.5 rounded-md text-[11px] font-mono text-slate-400 hover:text-white transition" data-range="3M">3M</button>
+            <button onclick="setChartRange('6M')" class="chart-range-btn px-2.5 py-0.5 rounded-md text-[11px] font-mono text-slate-400 hover:text-white transition" data-range="6M">6M</button>
+            <button onclick="setChartRange('1Y')" class="chart-range-btn active px-2.5 py-0.5 rounded-md text-[11px] font-mono bg-amber-500 text-slate-950 font-bold shadow-sm transition" data-range="1Y">1Y</button>
+          </div>
         </div>
-        <div class="w-full h-[280px] bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+
+        <div class="w-full h-[280px] bg-slate-950/70 p-3 rounded-xl border border-slate-800 relative">
           <canvas id="priceOverlayCanvas"></canvas>
+          <div class="absolute bottom-2 right-3 text-[10px] text-amber-400/80 font-mono pointer-events-none hidden sm:block">
+            💡 點擊圖上圓點可直接跳轉至推文並高亮顯示
+          </div>
         </div>
       </div>
 
@@ -706,7 +724,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 4. 浮動 AI 智能對話助理 (高度自適應、流式打字機與多輪記憶) -->
+  <!-- 4. 浮動 AI 智能對話助理 -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -734,8 +752,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="font-semibold text-slate-100 flex items-center gap-1.5">
           <span>👋</span> 你好！我是 Burak AI 助理，已支援【流式打字生成】與【多輪連續追問】：
         </div>
-        
-        <!-- 動態雙排快捷問答區 -->
         <div id="quick-ask-container" class="space-y-2 pt-1 border-t border-slate-700/60"></div>
       </div>
     </div>
@@ -866,12 +882,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     
     let tvChartVisible = false;
     let priceOverlayChartInstance = null;
+    let currentChartRange = '1Y'; // 方向二：走勢圖時間週期 (1M / 3M / 6M / 1Y)
 
     let watchlist = JSON.parse(localStorage.getItem('burak_watchlist') || '[]');
     let clientTranslations = JSON.parse(localStorage.getItem('burak_trans_cache') || '{}');
     let geminiApiKey = localStorage.getItem('burak_gemini_api_key') || '';
-
-    // 方向一核心：多輪對話歷史陣列 (Multi-turn Chat History)
     let chatContextHistory = [];
 
     function updateChatModeBadge() {
@@ -972,7 +987,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return Array.from(new Set([...models, ...defaultCandidates]));
     }
 
-    // 格式化輸出文字（輕量 Markdown 轉 HTML）
     function formatMarkdown(text) {
       if (!text) return '';
       return text
@@ -986,11 +1000,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .replace(/\\n/g, '<br>');
     }
 
-    // 方向一核心：智慧情報動態檢索 (Smart Context Retrieval)
     function buildSmartContext(query) {
       const qUpper = query.toUpperCase();
-      
-      // 偵測問題中提及的美股代號
       const mentionedTickers = Object.keys(stockQuotes).filter(sym => {
         const regex = new RegExp(`\\\\b\\\\$?${sym}\\\\b`, 'i');
         return regex.test(query);
@@ -1000,25 +1011,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       let selectedQuotes = [];
 
       if (mentionedTickers.length > 0) {
-        // 優先抓取該標的歷史推文（最多 20 則）
         const tickerTweets = allTweets.filter(t => t.tickers.some(s => mentionedTickers.includes(s))).slice(0, 20);
         selectedTweets.push(...tickerTweets);
 
-        // 補上對應即時估值
         mentionedTickers.forEach(sym => {
           const q = stockQuotes[sym];
           if (q) selectedQuotes.push(`$${sym}: 現價 $${q.price || '-'} (漲跌幅: ${q.changePct || 0}%, PE: ${q.forwardPE || '-'}, PS: ${q.priceToSales || '-'}, 板塊: ${q.sector || '科技'}, 財報: ${q.earningsDate || '未定'})`);
         });
       }
 
-      // 補足最新推文至 25 則
       allTweets.slice(0, 25).forEach(t => {
         if (!selectedTweets.some(item => item.id === t.id) && selectedTweets.length < 25) {
           selectedTweets.push(t);
         }
       });
 
-      // 補足熱門標的行情
       if (selectedQuotes.length < 15) {
         Object.entries(stockQuotes).slice(0, 15).forEach(([k, v]) => {
           const str = `$${k}: $${v.price || '-'} (PE: ${v.forwardPE || '-'}, 板塊: ${v.sector || '科技'})`;
@@ -1032,26 +1039,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return `【即時行情摘要】：\\n${quotesText}\\n\\n【相關焦點情報與推文摘要】：\\n${tweetsText}`;
     }
 
-    // 方向一核心：SSE 流式傳輸與多輪對話請求器 (Streaming Request with Fallback)
     async function executeGeminiStreamRequest(key, userText, onChunk) {
       const cleanKey = key.trim().replace(/["'\\s]/g, '');
       const candidateModels = await fetchOnlineGeminiModels(cleanKey);
 
-      // 動態組裝提示詞與多輪上下文
       const smartContext = buildSmartContext(userText);
       const systemInstructionText = `你是一位專業的美股社群量化情報分析專家，請基於以下【Burak Finance】社群情報與美股數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n${smartContext}`;
 
-      // 建立 Gemini 標準 contents 結構 (包含最近 3 輪歷史對話)
       const contentsPayload = [];
-      
-      // 第一輪帶入系統上下文
       if (chatContextHistory.length === 0) {
         contentsPayload.push({
           role: 'user',
           parts: [{ text: `${systemInstructionText}\\n\\n使用者問題：${userText}` }]
         });
       } else {
-        // 多輪模式：取最近 6 則訊息
         const recentHistory = chatContextHistory.slice(-6);
         recentHistory.forEach(item => contentsPayload.push(item));
         contentsPayload.push({
@@ -1088,7 +1089,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
               buffer += decoder.decode(value, { stream: true });
               const lines = buffer.split('\\n');
-              buffer = lines.pop() || ''; // 保留未完成的行
+              buffer = lines.pop() || '';
 
               for (const line of lines) {
                 const trimmed = line.trim();
@@ -1107,7 +1108,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
 
             if (fullText) {
-              // 記錄多輪對話歷史
               chatContextHistory.push({ role: 'user', parts: [{ text: userText }] });
               chatContextHistory.push({ role: 'model', parts: [{ text: fullText }] });
               return { ok: true, fullText: fullText, modelUsed: model };
@@ -1122,7 +1122,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           lastError = fetchErr.message;
         }
 
-        // 串流失敗時的單次請求備援
         try {
           const normalUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
           const normalRes = await fetch(normalUrl, {
@@ -1443,10 +1442,52 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       };
     }
 
+    // 方向二核心：點擊圓點直達推文並高亮動畫 (Click-to-Scroll & Highlight)
+    function scrollToTweet(tweetId) {
+      if (!tweetId) return;
+
+      // 檢查該推文是否在當前畫面渲染範圍內
+      let targetEl = document.getElementById(`tweet-card-${tweetId}`);
+      
+      if (!targetEl) {
+        // 若推文尚未載入（超出分頁），先擴大顯示上限並重新渲染
+        const viewFiltered = getFilteredByView(allTweets);
+        const targetIndex = viewFiltered.findIndex(t => t.id === tweetId);
+        if (targetIndex >= 0) {
+          displayLimit = Math.max(displayLimit, targetIndex + 10);
+          render();
+          targetEl = document.getElementById(`tweet-card-${tweetId}`);
+        }
+      }
+
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetEl.classList.remove('highlight-tweet-anim');
+        // 強制重繪重啟 CSS 動畫
+        void targetEl.offsetWidth;
+        targetEl.classList.add('highlight-tweet-anim');
+      }
+    }
+
+    // 方向二核心：走勢圖時間週期切換 (1M / 3M / 6M / 1Y)
+    function setChartRange(range) {
+      currentChartRange = range;
+      document.querySelectorAll('.chart-range-btn').forEach(btn => {
+        const active = btn.dataset.range === range;
+        btn.className = `chart-range-btn px-2.5 py-0.5 rounded-md text-[11px] font-mono transition ${
+          active ? 'bg-amber-500 text-slate-950 font-bold shadow-sm' : 'text-slate-400 hover:text-white'
+        }`;
+      });
+      if (currentTicker) {
+        renderPriceOverlayChart(currentTicker);
+      }
+    }
+
+    // 方向二核心：股價走勢與多空點位疊圖 (支援週期縮放與點擊事件)
     function renderPriceOverlayChart(ticker) {
       if (!ticker) return;
       const quote = stockQuotes[ticker];
-      const history = (quote && quote.history) ? quote.history : [];
+      let history = (quote && quote.history) ? [...quote.history] : [];
       const tickerTweets = allTweets.filter(t => t.tickers.includes(ticker));
 
       const ctx = document.getElementById('priceOverlayCanvas').getContext('2d');
@@ -1455,6 +1496,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (!history.length) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         return;
+      }
+
+      // 依當前選擇的時間週期裁剪歷史日 K 數據
+      if (currentChartRange === '1M') {
+        history = history.slice(-22); // 約 1 個月交易日
+      } else if (currentChartRange === '3M') {
+        history = history.slice(-66); // 約 3 個月交易日
+      } else if (currentChartRange === '6M') {
+        history = history.slice(-130); // 約 6 個月交易日
       }
 
       const labels = history.map(h => h.d);
@@ -1486,7 +1536,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             pointColors.push('#38bdf8');
           }
           pointRadiuses.push(6);
-          pointHoverRadiuses.push(9);
+          pointHoverRadiuses.push(10);
         } else {
           pointColors.push('transparent');
           pointRadiuses.push(0);
@@ -1520,6 +1570,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             mode: 'index',
             intersect: false
           },
+          // 方向二：滑鼠懸停變手勢提示
+          onHover: (event, chartElements) => {
+            if (event.native && event.native.target) {
+              const hasTweetPoint = chartElements[0] && pointRadiuses[chartElements[0].index] > 0;
+              event.native.target.style.cursor = hasTweetPoint ? 'pointer' : 'default';
+            }
+          },
+          // 方向二：點擊圓點直達該篇推文卡片
+          onClick: (event, chartElements) => {
+            if (chartElements && chartElements.length > 0) {
+              const idx = chartElements[0].index;
+              const clickedDate = labels[idx];
+              const tweetsOnDate = tweetMap[clickedDate];
+              if (tweetsOnDate && tweetsOnDate.length > 0) {
+                scrollToTweet(tweetsOnDate[0].id);
+              }
+            }
+          },
           plugins: {
             legend: { display: false },
             tooltip: {
@@ -1540,6 +1608,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                       const icon = t.sentiment === 'Bullish' ? '🟢 看多' : (t.sentiment === 'Bearish' ? '🔴 看空' : '🔵 中立');
                       lines.push(`【${icon}】${t.summary || t.text.slice(0, 45) + '...'}`);
                     });
+                    lines.push('👉 點擊此點直達推文卡片');
                   }
                   return lines;
                 }
@@ -1941,6 +2010,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    // 方向二核心升級：在每張推文卡片加入 id="tweet-card-${item.id}"，實現毫秒級定位直達
     function render() {
       const container = document.getElementById('tweets-list');
       const viewFiltered = getFilteredByView(allTweets);
@@ -2016,7 +2086,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         return `
-          <article class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 sm:p-5 hover:border-slate-700/80 transition space-y-3">
+          <article id="tweet-card-${item.id}" class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 sm:p-5 hover:border-slate-700/80 transition duration-300 space-y-3">
             <div class="flex items-center justify-between flex-wrap gap-2">
               <div class="flex items-center gap-2">
                 ${sentimentBadge}
@@ -2044,7 +2114,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 雙排動態快捷問答按鈕生成器 (第一排: 市場量化策略, 第二排: 個股深鑽與情境感知)
+    // 雙排動態快捷問答按鈕生成器
     function renderQuickAskButtons() {
       const container = document.getElementById('quick-ask-container');
       if (!container) return;
@@ -2105,7 +2175,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       `;
     }
 
-    // AI 對話抽屜管理
     function toggleChatDrawer() {
       const drawer = document.getElementById('ai-chat-drawer');
       drawer.classList.toggle('hidden');
@@ -2149,7 +2218,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // 方向一核心：Gemini 雲端串流查詢執行函式
     async function queryGeminiAPI(userQuery) {
       const sendBtn = document.getElementById('chat-send-btn');
       sendBtn.disabled = true;
@@ -2176,11 +2244,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // 本機快速模式意圖解析器
     function processLocalChatIntent(query) {
       const q = query.toUpperCase();
       
-      // 1. 今日日報重點
       if (q.includes('日報') || q.includes('今日')) {
         setViewMode('daily');
         const viewTweets = getFilteredByView(allTweets);
@@ -2200,7 +2266,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 2. 目前立場最偏多標的
       if (q.includes('偏多') || q.includes('看多') || q.includes('BULLISH')) {
         const counts = {};
         allTweets.forEach(t => {
@@ -2227,7 +2292,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 3. 前瞻 P/E 最低估值排名
       if (q.includes('低估值') || q.includes('本益比') || q.includes('便宜') || q.includes('P/E')) {
         const valueTickers = Object.entries(stockQuotes)
           .filter(([sym, data]) => data.forwardPE && data.forwardPE > 0)
@@ -2242,7 +2306,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 4. 近期風險警戒清單
       if (q.includes('風險') || q.includes('警戒') || q.includes('看空清單')) {
         const riskTweets = allTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('警戒') || t.summary.includes('跌')))).slice(0, 5);
         if (riskTweets.length > 0) {
@@ -2258,7 +2321,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 5. AI 算力板塊多空總覽
       if (q.includes('AI') || q.includes('算力') || q.includes('晶片')) {
         setSectorFilter('AI 算力與高速互連');
         const aiSymbols = SECTOR_MAPPING['AI 算力與高速互連'] || [];
@@ -2272,7 +2334,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 6. 診斷自選股
       if (q.includes('自選') || q.includes('WATCHLIST')) {
         if (watchlist.length === 0) {
           appendChatMessage('ai', '⭐ 你的自選股清單目前是空的，請先在行情卡或上方標的列點擊「★」加入自選股！');
@@ -2289,7 +2350,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 7. 個股代號深鑽
       const tickerMatch = q.match(/\\$?([A-Za-z]{1,6})/);
       const symbol = tickerMatch ? tickerMatch[1].toUpperCase() : null;
 
@@ -2373,7 +2433,7 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (方向一：SSE 串流、多輪記憶與智慧上下文檢索已全面就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (方向二：週期切換與圓點直達推文高亮已全面就緒)", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
