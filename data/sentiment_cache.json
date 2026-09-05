@@ -2208,5 +2208,10 @@
     "sentiment": "Bullish",
     "summary": "AI概念股年初至今漲幅強勁",
     "translation_zh": "AI 概念股年初至今報酬率計分板：\n\n$SNDK +631%\n$DELL +315%\n$MU +255%\nblockstack:native +205%\n$WDC +167%\n$MRVL +162%\n$INTC +160%\n$NBIS +159%\n$LITE +132%\n$ARM +131%\n$AMD +122%"
+  },
+  "2096291268242645322": {
+    "sentiment": "Neutral",
+    "summary": "拆解AI產業鏈四種商業模式",
+    "translation_zh": "$NVDA $AMD $MU 賣工具\n$NBIS $CRWV $IREN $CIFR 賣算力時數\n$MSFT $META $AMZN $GOOGL 買算力時數\n$PLTR $NOW $CRWD $APP 賣最終成果 https://t.co/sWc25tWwfe"
   }
 }
