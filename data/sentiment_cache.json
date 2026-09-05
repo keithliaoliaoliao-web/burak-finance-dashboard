@@ -2213,5 +2213,10 @@
     "sentiment": "Neutral",
     "summary": "拆解AI產業鏈四種商業模式",
     "translation_zh": "$NVDA $AMD $MU 賣工具\n$NBIS $CRWV $IREN $CIFR 賣算力時數\n$MSFT $META $AMZN $GOOGL 買算力時數\n$PLTR $NOW $CRWD $APP 賣最終成果 https://t.co/sWc25tWwfe"
+  },
+  "2096331785223217493": {
+    "sentiment": "Bearish",
+    "summary": "警告AI股可能隨IPO見頂修正",
+    "translation_zh": "⚠️ 請將此視為對您的警告。\n\n$RKLB 在 $SPCX IPO 前約 16 天觸頂。\n\n隨後 $RKLB、$ASTS、$PL 等所有太空概念股都遭受重創。\n\n現在我們即將迎來 Anthropic 的 IPO。\n\n請留意那些價格已經完美反映預期的 AI 與軟體類股。"
   }
 }
