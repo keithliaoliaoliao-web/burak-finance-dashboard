@@ -15,7 +15,12 @@ TWITTER_EPOCH = 1288834974657
 # 突破 71% 覆蓋率關鍵：將總經、大盤與利率推文一併納入情緒分析
 ANALYZE_MACRO_TWEETS = True
 
-# 讀取 GEMINI_API_KEY 並清除可能存在的空白或引號
+# 頻率防禦策略設定 (針對 Google 15 RPM 限制最佳化)
+BATCH_LIMIT = 15       # 單輪只分析 15 筆，避免長時間排程逾時
+REQUEST_DELAY = 5.5    # 每筆請求間隔 5.5 秒，確保每分鐘 <= 11 次呼叫
+MAX_RETRIES = 3        # 遭遇 429 限制時的最大重試次數
+
+# 讀取 GEMINI_API_KEY
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().replace('"', '').replace("'", "")
 
 def snowflake_to_timestamp(tweet_id_str):
@@ -41,7 +46,7 @@ def save_cache(filepath, data_dict):
         json.dump(data_dict, f, ensure_ascii=False, indent=2)
 
 def get_model_score(model_name):
-    """計算模型版本權重，確保新版本（如 3.6 > 3.0 > 2.0）排序在最前"""
+    """計算模型版本權重，確保新版本（如 3.8 > 3.7 > 3.6）排序在最前"""
     score = 0
     lower = model_name.lower()
     ver_match = re.search(r"gemini-(\d+(?:\.\d+)?)", lower)
@@ -59,7 +64,7 @@ def get_model_score(model_name):
     return score
 
 def fetch_online_gemini_models(api_key):
-    """動態向 Google AI Studio 查詢最新可用模型清單"""
+    """向 Google AI Studio 查詢最新可用模型清單"""
     list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     headers = {
         "Content-Type": "application/json",
@@ -82,15 +87,14 @@ def fetch_online_gemini_models(api_key):
     except Exception as e:
         print(f"⚠️ 動態查詢模型清單警告: {e}", flush=True)
 
-    # 保底預設名單（以官方要求的 gemini-3.6-flash 為首選）
     default_candidates = [
+        "gemini-3.8-flash",
         "gemini-3.6-flash",
         "gemini-3.0-flash",
         "gemini-2.0-flash",
         "gemini-pro"
     ]
     
-    # 合併去重並維持高版本排序
     combined = []
     for item in models + default_candidates:
         if item not in combined:
@@ -98,7 +102,7 @@ def fetch_online_gemini_models(api_key):
     return combined
 
 def detect_working_model(api_key):
-    """逐一驗證候選模型，鎖定第一個確認可正常回傳的端點"""
+    """探測並確認可用模型，每次探測後適度冷卻避免消耗額度"""
     candidate_models = fetch_online_gemini_models(api_key)
     print(f"🔎 探測候選模型清單: {candidate_models[:4]}", flush=True)
 
@@ -118,15 +122,17 @@ def detect_working_model(api_key):
             with urllib.request.urlopen(req, timeout=8) as res:
                 if res.status == 200:
                     print(f"🤖 動態探測成功！本輪啟用最佳可用模型：{model_name}", flush=True)
+                    time.sleep(2.0)  # 探測完成後保留安全間隔
                     return model_name
         except Exception:
             continue
 
-    # 若探測皆未成功，回傳最新標準端點
-    return "gemini-3.6-flash"
+    return "gemini-3.8-flash"
 
 def analyze_tweet_with_gemini(text, model_name, api_key):
-    """使用原生 REST API 與 x-goog-api-key 標頭進行推文結構化分析"""
+    """
+    使用原生 REST API 分析情緒，具備 429 指數退避重試保護
+    """
     prompt = f"""
 你是一位專業的美股社群量化情報專家。請分析以下這篇美股情報推文：
 \"\"\"{text}\"\"\"
@@ -149,18 +155,29 @@ def analyze_tweet_with_gemini(text, model_name, api_key):
         }
     )
 
-    try:
-        with urllib.request.urlopen(req, timeout=15) as res:
-            if res.status == 200:
-                result = json.loads(res.read().decode("utf-8"))
-                if result.get("candidates") and result["candidates"][0].get("content"):
-                    raw_out = result["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    # 去除可能包含的 Markdown 語法標記
-                    raw_out = re.sub(r"^```json\s*", "", raw_out)
-                    raw_out = re.sub(r"\s*```$", "", raw_out)
-                    return json.loads(raw_out)
-    except Exception as e:
-        print(f"⚠️ 分析呼叫異常: {e}", flush=True)
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as res:
+                if res.status == 200:
+                    result = json.loads(res.read().decode("utf-8"))
+                    if result.get("candidates") and result["candidates"][0].get("content"):
+                        raw_out = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        raw_out = re.sub(r"^```json\s*", "", raw_out)
+                        raw_out = re.sub(r"\s*```$", "", raw_out)
+                        return json.loads(raw_out)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                wait_seconds = attempt * 10
+                print(f"    ⏳ 遇到 429 頻率限制，原地冷卻 {wait_seconds} 秒後進行第 {attempt}/{MAX_RETRIES} 次重試...", flush=True)
+                time.sleep(wait_seconds)
+                continue
+            else:
+                print(f"⚠️ 分析呼叫異常 (HTTP {e.code}): {e}", flush=True)
+                break
+        except Exception as e:
+            print(f"⚠️ 分析呼叫異常: {e}", flush=True)
+            break
+
     return None
 
 if __name__ == "__main__":
@@ -194,7 +211,6 @@ if __name__ == "__main__":
             continue
         
         has_ticker = bool(re.search(r"(?<!\w)\$([A-Za-z]{1,6})\b", t_text))
-        # 若未包含 $ 標記，依據 ANALYZE_MACRO_TWEETS 決定是否納入分析
         if not has_ticker and not ANALYZE_MACRO_TWEETS:
             continue
 
@@ -204,13 +220,14 @@ if __name__ == "__main__":
     print(f"📊 總推文數：{len(tweets_data)} | 已分析：{len(cache_dict)} | 待分析：{len(pending)}")
     
     if pending:
-        # 動態鎖定目前確定可用的最高版本模型
         active_model = detect_working_model(GEMINI_API_KEY)
         success_count = 0
-        batch_limit = min(len(pending), 30)
+        current_batch = pending[:BATCH_LIMIT]
 
-        for idx, (tweet_id, text) in enumerate(pending[:batch_limit]):
-            print(f"  🔍 [{idx+1}/{batch_limit}] 正在分析推文 {tweet_id}...", flush=True)
+        print(f"🚀 本輪預計分析 {len(current_batch)} 筆推文（每筆間隔 {REQUEST_DELAY} 秒）...", flush=True)
+
+        for idx, (tweet_id, text) in enumerate(current_batch):
+            print(f"  🔍 [{idx+1}/{len(current_batch)}] 正在分析推文 {tweet_id}...", flush=True)
             res = analyze_tweet_with_gemini(text, active_model, GEMINI_API_KEY)
             if res:
                 cache_dict[tweet_id] = {
@@ -221,14 +238,15 @@ if __name__ == "__main__":
                 }
                 success_count += 1
 
-                # 每完成 5 筆自動寫入磁碟，避免中斷遺失進度
-                if success_count % 5 == 0:
+                # 每完成 3 筆即時儲存快取，確保進度不丟失
+                if success_count % 3 == 0:
                     save_cache(CACHE_FILE, cache_dict)
-                    print(f"  💾 已自動儲存最新進度至 {CACHE_FILE}", flush=True)
+                    print(f"  💾 已儲存最新進度至 {CACHE_FILE}", flush=True)
 
-            time.sleep(1.2)  # 調用速率保護
+            # 主動冷卻時間，保護 API 配額不超標
+            time.sleep(REQUEST_DELAY)
 
         save_cache(CACHE_FILE, cache_dict)
-        print(f"🎉 本輪分析完成，新增 {success_count} 筆，累計已分析：{len(cache_dict)} 筆。")
+        print(f"🎉 本輪分析完成！成功新增：{success_count} 筆，目前累計已分析：{len(cache_dict)} 筆。")
     else:
         print("✅ 所有推文均已分析完畢，覆蓋率 100%！")
