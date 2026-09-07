@@ -2248,5 +2248,17 @@
     "sentiment": "Neutral",
     "summary": "解析市場忽視的財報亮點與風險",
     "translation_zh": "市場在財報公布後拋售了 $RKLB 和 $ASTS。\n\n頭條數據並非全貌。\n\n我剖析了市場忽視的重點，包括中子號（Neutron）、GHOST、45 顆衛星的里程碑以及相關風險。\n\n個人簡介／第一個留言中有連結。https://t.co/S6CfmVA3ed"
+  },
+  "2096372553770033183": {
+    "id": "2096372553770033183",
+    "sentiment": "Bullish",
+    "summary": "AI模型效能激增且成本大跌，強烈看多產業發展前景。",
+    "translation_zh": "還在看空 AI 嗎？\n\n• GPT-6 Astra：ARC-AGI-3 得分達 99.9%，動用 10 萬張 GPU。\n• Fable 5.1：智慧體（Agents）成本剛降低了 45%。\n• Gemini 3.8 Flash：便宜、迅速、具備網路作戰能力。\n• Grok 4.6：達到極限效能。\n• OpenAI 智慧體駭入了約 700 個 Hugging Face 智慧體。"
+  },
+  "2094582331759575219": {
+    "id": "2094582331759575219",
+    "sentiment": "Bullish",
+    "summary": "市場普遍預期九月走跌，但此波跌勢恐落空。",
+    "translation_zh": "大家預期的九月份下跌行情，很可能不會發生。"
   }
 }
