@@ -3,6 +3,7 @@ import os
 import re
 from datetime import datetime
 import yfinance as yf
+import pandas as pd
 
 # ==========================================
 # 參數設定區 (Burak Finance 專屬)
@@ -10,9 +11,25 @@ import yfinance as yf
 TARGET_HANDLE = "burak_finance"
 TWEETS_FILE = "data/tweets.json"
 CACHE_FILE = "data/sentiment_cache.json"
+QUOTES_CACHE_FILE = "data/stock_quotes_cache.json"
 OUTPUT_HTML = "docs/index.html"
 
 TWITTER_EPOCH = 1288834974657
+
+# 常見錯別字與代號別名校正表
+TICKER_ALIASES = {
+    "APPL": "AAPL",
+    "QLCM": "QCOM",
+    "FB": "META",
+    "GOOG": "GOOGL"
+}
+
+# 排除非美股代號（加密貨幣或雜訊）
+CRYPTO_BLACKLIST = {
+    "USD", "USDT", "BTC", "ETH", "SOL", "DOGE", "XRP", "CAD", "EUR", "ATH",
+    "CEO", "CFO", "CTO", "AI", "FOMC", "FED", "CPI", "PPI", "GDP", "DD",
+    "EOD", "YOLO", "NEW", "BUY", "SELL", "HOLD", "CALL", "PUT", "AND", "THE", "TECH", "EV"
+}
 
 # 美股 9 大核心產業板塊對應字典
 SECTOR_MAPPING = {
@@ -56,6 +73,14 @@ SECTOR_MAPPING = {
     ]
 }
 
+def normalize_ticker(symbol):
+    """校正錯字並過濾非標的字串"""
+    sym = symbol.upper().strip()
+    sym = TICKER_ALIASES.get(sym, sym)
+    if sym in CRYPTO_BLACKLIST:
+        return None
+    return sym
+
 def resolve_sector(ticker, yf_info=None):
     """【雙層分類器】：結合靜態字典與 Yahoo Finance 英文產業語意自動轉譯"""
     sym = ticker.upper().strip()
@@ -85,7 +110,6 @@ def resolve_sector(ticker, yf_info=None):
     return "其他科技 / 綜合"
 
 def snowflake_to_iso(tweet_id_str):
-    """利用 Twitter Snowflake 演算法計算精確 UTC 發布時間"""
     try:
         t_id = int(str(tweet_id_str).strip())
         timestamp_ms = (t_id >> 22) + TWITTER_EPOCH
@@ -131,19 +155,18 @@ def load_cache(filepath):
             return {}
     except Exception as e:
         print(f"⚠️ 讀取快取檔案失敗 ({filepath}): {e}", flush=True)
-        return []
+        return {}
 
 def extract_tickers(text):
-    """萃取推文中的美股代號"""
     if not text:
         return []
     matches = re.findall(r"(?<!\w)\$([A-Za-z]{1,6})\b", text)
-    blacklist = {
-        "USD", "USDT", "BTC", "ETH", "CAD", "EUR", "ATH", "CEO", "CFO", "CTO",
-        "AI", "FOMC", "FED", "CPI", "PPI", "GDP", "DD", "EOD", "YOLO", "NEW",
-        "BUY", "SELL", "HOLD", "CALL", "PUT", "AND", "THE", "TECH", "EV"
-    }
-    return sorted(list(set(t.upper() for t in matches if t.upper() not in blacklist and t.isalpha())))
+    result = []
+    for t in matches:
+        cleaned = normalize_ticker(t)
+        if cleaned and cleaned not in result:
+            result.append(cleaned)
+    return sorted(result)
 
 def extract_tweet_id(item):
     for k in ["id", "id_str", "tweet_id", "tweetId", "rest_id", "conversation_id"]:
@@ -166,7 +189,6 @@ def extract_tweet_text(item):
     return ""
 
 def parse_date(item, tweet_id=""):
-    """解析推文發布時間"""
     if tweet_id and tweet_id.isdigit() and len(tweet_id) >= 10:
         d_str, m_str, day_str, iso_str = snowflake_to_iso(tweet_id)
         if d_str:
@@ -198,7 +220,6 @@ def parse_date(item, tweet_id=""):
     return s, "未知月份", s[:10], s
 
 def extract_metrics(item):
-    """解析按讚、轉推與瀏覽量"""
     likes, retweets, views = 0, 0, 0
     containers = [item]
     for sub in ["public_metrics", "metrics", "stats", "legacy"]:
@@ -313,11 +334,58 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
     return cleaned, ticker_counts, recent_tickers
 
 def fetch_stock_quotes_and_fundamentals(tickers):
-    """獲取美股市場即時行情、基本面估值以及過去 1 年的日 K 收盤歷史走勢"""
-    print(f"📈 正在擷取 {len(tickers)} 個關注標的的市場行情、估值與 1 年日 K 歷史數據...", flush=True)
-    quotes = {}
+    """
+    【旗艦行情引擎】：
+    1. yf.download 平行批次下載 1 年日 K 數據
+    2. 自動讀寫 data/stock_quotes_cache.json
+    3. 遭遇 Yahoo Finance 限流時，自動從快取回填歷史走勢與報價
+    """
+    print(f"📈 正在平行批次擷取 {len(tickers)} 個標的行情與估值...", flush=True)
     
+    # 讀取本地快取
+    cached_quotes = {}
+    if os.path.exists(QUOTES_CACHE_FILE):
+        try:
+            with open(QUOTES_CACHE_FILE, "r", encoding="utf-8") as f:
+                cached_quotes = json.load(f)
+        except Exception as e:
+            print(f"⚠️ 讀取行情快取失敗: {e}")
+
+    # 平行批次下載日 K 歷史數據
+    batch_hist = {}
+    try:
+        print("  ⏳ 執行 yf.download 平行下載中...", flush=True)
+        hist_df = yf.download(
+            tickers=tickers,
+            period="1y",
+            interval="1d",
+            group_by="ticker",
+            threads=True,
+            progress=False
+        )
+        if not hist_df.empty:
+            for sym in tickers:
+                try:
+                    df_sym = hist_df[sym] if len(tickers) > 1 else hist_df
+                    df_sym = df_sym.dropna(subset=["Close"])
+                    series_data = []
+                    for idx_dt, row_data in df_sym.iterrows():
+                        c_val = row_data["Close"]
+                        if pd.notna(c_val):
+                            series_data.append({
+                                "d": idx_dt.strftime("%Y-%m-%d"),
+                                "c": round(float(c_val), 2)
+                            })
+                    if series_data:
+                        batch_hist[sym] = series_data
+                except Exception:
+                    pass
+    except Exception as batch_err:
+        print(f"  ⚠️ yf.download 批次歷史線下載警告: {batch_err}")
+
+    quotes = {}
     for symbol in tickers:
+        prev_cache = cached_quotes.get(symbol, {})
         try:
             ticker_obj = yf.Ticker(symbol)
             fast = getattr(ticker_obj, "fast_info", None)
@@ -344,21 +412,9 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                 pass
 
             sector_name = resolve_sector(symbol, info)
+            history_data = batch_hist.get(symbol) or prev_cache.get("history", [])
 
-            history_data = []
-            try:
-                hist = ticker_obj.history(period="1y", interval="1d")
-                if not hist.empty:
-                    for ts, row in hist.iterrows():
-                        c_val = row.get("Close")
-                        if c_val is not None and not str(c_val).lower() == 'nan':
-                            history_data.append({
-                                "d": ts.strftime("%Y-%m-%d"),
-                                "c": round(float(c_val), 2)
-                            })
-            except Exception as hist_err:
-                print(f"  ⚠️ 無法取得 ${symbol} 歷史日 K: {hist_err}")
-
+            # 若即時價格抓取成功
             if current_price is not None and float(current_price) > 0:
                 change = (current_price - prev_close) if prev_close else 0.0
                 change_pct = ((change / prev_close) * 100) if prev_close else 0.0
@@ -368,23 +424,40 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                     "prevClose": round(float(prev_close), 2) if prev_close else round(float(current_price), 2),
                     "change": round(float(change), 2),
                     "changePct": round(float(change_pct), 2),
-                    "high52": round(float(high_52), 2) if high_52 else None,
-                    "low52": round(float(low_52), 2) if low_52 else None,
+                    "high52": round(float(high_52), 2) if high_52 else prev_cache.get("high52"),
+                    "low52": round(float(low_52), 2) if low_52 else prev_cache.get("low52"),
                     "volume": int(volume) if volume else 0,
-                    "marketCap": int(market_cap) if market_cap else None,
-                    "forwardPE": round(float(forward_pe), 2) if forward_pe else None,
-                    "trailingPE": round(float(trailing_pe), 2) if trailing_pe else None,
-                    "priceToSales": round(float(price_to_sales), 2) if price_to_sales else None,
-                    "revenueGrowth": round(float(revenue_growth) * 100, 1) if revenue_growth else None,
-                    "earningsDate": earnings_date_str,
+                    "marketCap": int(market_cap) if market_cap else prev_cache.get("marketCap"),
+                    "forwardPE": round(float(forward_pe), 2) if forward_pe else prev_cache.get("forwardPE"),
+                    "trailingPE": round(float(trailing_pe), 2) if trailing_pe else prev_cache.get("trailingPE"),
+                    "priceToSales": round(float(price_to_sales), 2) if price_to_sales else prev_cache.get("priceToSales"),
+                    "revenueGrowth": round(float(revenue_growth) * 100, 1) if revenue_growth else prev_cache.get("revenueGrowth"),
+                    "earningsDate": earnings_date_str or prev_cache.get("earningsDate"),
                     "sector": sector_name,
                     "history": history_data
                 }
-                print(f"  ✅ ${symbol}: ${current_price:.2f} ({change_pct:+.2f}%) | 歷史點位: {len(history_data)} 筆", flush=True)
             else:
-                quotes[symbol] = {"sector": sector_name, "history": history_data}
-        except Exception as e:
-            quotes[symbol] = {"sector": resolve_sector(symbol), "history": []}
+                # 觸發限流回填機制
+                if prev_cache and prev_cache.get("price"):
+                    print(f"  🔄 ${symbol} 遭遇限流，自動套用歷史快取數據", flush=True)
+                    quotes[symbol] = prev_cache
+                    quotes[symbol]["history"] = history_data
+                else:
+                    quotes[symbol] = {"sector": sector_name, "history": history_data}
+        except Exception:
+            if prev_cache:
+                quotes[symbol] = prev_cache
+            else:
+                quotes[symbol] = {"sector": resolve_sector(symbol), "history": []}
+
+    # 持久化寫入快取
+    try:
+        os.makedirs(os.path.dirname(QUOTES_CACHE_FILE), exist_ok=True)
+        with open(QUOTES_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(quotes, f, ensure_ascii=False)
+        print(f"💾 行情持久化快取已儲存至 {QUOTES_CACHE_FILE}", flush=True)
+    except Exception as e:
+        print(f"⚠️ 寫入行情快取失敗: {e}")
 
     return quotes
 
@@ -499,7 +572,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <span class="text-xs font-bold text-slate-400 mr-2 flex items-center gap-1">🏢 產業板塊：</span>
       <button onclick="setSectorFilter('ALL')" class="sector-btn active px-3 py-1 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 text-white transition" data-sector="ALL">全部板塊</button>
       
-      <!-- 自選股按鈕群組 -->
       <div class="inline-flex items-center rounded-lg border border-amber-500/30 bg-amber-500/5 p-0.5">
         <button onclick="setSectorFilter('WATCHLIST')" class="sector-btn px-2.5 py-1 rounded-md text-xs font-medium text-amber-300 hover:bg-amber-500/10 transition" data-sector="WATCHLIST">
           ⭐ 我的自選股
@@ -579,7 +651,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- 基本面估值指標卡 -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 border-t lg:border-t-0 lg:border-l border-slate-800 pt-3 lg:pt-0 lg:pl-6">
           <div class="bg-slate-950/40 p-2.5 rounded-lg border border-slate-800/80">
             <div class="text-[11px] text-slate-400">市值 (Market Cap)</div>
@@ -613,7 +684,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- 方向二核心升級：走勢疊圖容器 (含 1M/3M/6M/1Y 時間軸與點擊提示) -->
+      <!-- 走勢疊圖容器 (含 1M/3M/6M/1Y 時間軸縮放與推文聯動) -->
       <div id="price-overlay-chart-wrapper" class="border-t border-slate-800/80 pt-4">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
           <div class="flex items-center gap-2 flex-wrap">
@@ -625,7 +696,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- 方向二：時間軸週期切換按鈕群組 -->
           <div class="flex items-center gap-1 bg-slate-950/80 p-0.5 rounded-lg border border-slate-800 self-start sm:self-auto">
             <button onclick="setChartRange('1M')" class="chart-range-btn px-2.5 py-0.5 rounded-md text-[11px] font-mono text-slate-400 hover:text-white transition" data-range="1M">1M</button>
             <button onclick="setChartRange('3M')" class="chart-range-btn px-2.5 py-0.5 rounded-md text-[11px] font-mono text-slate-400 hover:text-white transition" data-range="3M">3M</button>
@@ -682,7 +752,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   </main>
 
-  <!-- 3. 雙標的橫向深度對比矩陣 Modal -->
+  <!-- 雙標的橫向深度對比矩陣 Modal -->
   <div id="compare-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-4">
@@ -724,7 +794,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 4. 浮動 AI 智能對話助理 -->
+  <!-- 浮動 AI 智能對話助理 (支援 SSE 流式打字與多輪連續追問) -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -732,7 +802,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div id="ai-chat-drawer" class="fixed bottom-20 right-4 sm:right-6 z-50 w-[94vw] sm:w-[460px] max-h-[85vh] h-[min(530px,calc(100vh-120px))] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden hidden flex-col">
-    <!-- 頂部標題列 -->
     <div class="p-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
       <div class="flex items-center gap-2 min-w-0">
         <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0"></span>
@@ -746,7 +815,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- 對話訊息視窗 -->
     <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs leading-relaxed">
       <div class="bg-slate-800/80 border border-slate-700/70 p-3.5 rounded-xl text-slate-200 space-y-2.5">
         <div class="font-semibold text-slate-100 flex items-center gap-1.5">
@@ -756,7 +824,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- 輸入列 -->
     <form onsubmit="handleChatSubmit(event)" class="p-2.5 bg-slate-950 border-t border-slate-800 flex gap-2 shrink-0">
       <input type="text" id="chat-input" placeholder="輸入問題（支援連續追問，如：分析 $NVDA、那 $AMD 呢？）..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500" />
       <button type="submit" id="chat-send-btn" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition flex items-center justify-center">發送</button>
@@ -775,7 +842,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="space-y-2">
-        <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key (格式為 AQ. 開頭)：</label>
+        <label class="text-xs text-slate-300 font-semibold block">貼上你的 API Key (格式通常為 AQ. 開頭)：</label>
         <div class="relative flex items-center">
           <input type="password" id="apikey-input" placeholder="AQ.Ab8RN..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-10 py-2.5 text-xs text-amber-400 font-mono focus:outline-none focus:border-amber-500" />
           <button type="button" onclick="toggleApiKeyVisibility()" id="apikey-eye-btn" class="absolute right-2.5 text-slate-400 hover:text-white text-sm p-1" title="顯示/隱藏金鑰">👁️</button>
@@ -804,7 +871,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 2. 個股 AI 深度論點脈絡 Modal -->
+  <!-- 個股 AI 深度論點脈絡 Modal -->
   <div id="deepdive-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-4">
@@ -882,12 +949,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     
     let tvChartVisible = false;
     let priceOverlayChartInstance = null;
-    let currentChartRange = '1Y'; // 方向二：走勢圖時間週期 (1M / 3M / 6M / 1Y)
+    let currentChartRange = '1Y'; // 1M / 3M / 6M / 1Y
+    let chatContextHistory = [];
 
     let watchlist = JSON.parse(localStorage.getItem('burak_watchlist') || '[]');
     let clientTranslations = JSON.parse(localStorage.getItem('burak_trans_cache') || '{}');
     let geminiApiKey = localStorage.getItem('burak_gemini_api_key') || '';
-    let chatContextHistory = [];
 
     function updateChatModeBadge() {
       const badge = document.getElementById('chat-mode-badge');
@@ -1442,15 +1509,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       };
     }
 
-    // 方向二核心：點擊圓點直達推文並高亮動畫 (Click-to-Scroll & Highlight)
+    // 點擊圓點直達推文卡片並觸發高亮動畫
     function scrollToTweet(tweetId) {
       if (!tweetId) return;
-
-      // 檢查該推文是否在當前畫面渲染範圍內
       let targetEl = document.getElementById(`tweet-card-${tweetId}`);
       
       if (!targetEl) {
-        // 若推文尚未載入（超出分頁），先擴大顯示上限並重新渲染
         const viewFiltered = getFilteredByView(allTweets);
         const targetIndex = viewFiltered.findIndex(t => t.id === tweetId);
         if (targetIndex >= 0) {
@@ -1463,13 +1527,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (targetEl) {
         targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         targetEl.classList.remove('highlight-tweet-anim');
-        // 強制重繪重啟 CSS 動畫
         void targetEl.offsetWidth;
         targetEl.classList.add('highlight-tweet-anim');
       }
     }
 
-    // 方向二核心：走勢圖時間週期切換 (1M / 3M / 6M / 1Y)
+    // 走勢圖週期切換 (1M / 3M / 6M / 1Y)
     function setChartRange(range) {
       currentChartRange = range;
       document.querySelectorAll('.chart-range-btn').forEach(btn => {
@@ -1483,7 +1546,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // 方向二核心：股價走勢與多空點位疊圖 (支援週期縮放與點擊事件)
+    // 股價走勢與多空點位疊圖 (支援縮放與點擊事件)
     function renderPriceOverlayChart(ticker) {
       if (!ticker) return;
       const quote = stockQuotes[ticker];
@@ -1498,13 +1561,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      // 依當前選擇的時間週期裁剪歷史日 K 數據
       if (currentChartRange === '1M') {
-        history = history.slice(-22); // 約 1 個月交易日
+        history = history.slice(-22);
       } else if (currentChartRange === '3M') {
-        history = history.slice(-66); // 約 3 個月交易日
+        history = history.slice(-66);
       } else if (currentChartRange === '6M') {
-        history = history.slice(-130); // 約 6 個月交易日
+        history = history.slice(-130);
       }
 
       const labels = history.map(h => h.d);
@@ -1570,14 +1632,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             mode: 'index',
             intersect: false
           },
-          // 方向二：滑鼠懸停變手勢提示
           onHover: (event, chartElements) => {
             if (event.native && event.native.target) {
               const hasTweetPoint = chartElements[0] && pointRadiuses[chartElements[0].index] > 0;
               event.native.target.style.cursor = hasTweetPoint ? 'pointer' : 'default';
             }
           },
-          // 方向二：點擊圓點直達該篇推文卡片
           onClick: (event, chartElements) => {
             if (chartElements && chartElements.length > 0) {
               const idx = chartElements[0].index;
@@ -2010,7 +2070,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // 方向二核心升級：在每張推文卡片加入 id="tweet-card-${item.id}"，實現毫秒級定位直達
     function render() {
       const container = document.getElementById('tweets-list');
       const viewFiltered = getFilteredByView(allTweets);
@@ -2114,7 +2173,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // 雙排動態快捷問答按鈕生成器
     function renderQuickAskButtons() {
       const container = document.getElementById('quick-ask-container');
       if (!container) return;
@@ -2362,6 +2420,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const qData = stockQuotes[symbol] || {};
           const priceText = qData.price ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)` : '即時行情模式';
 
+          if (q.includes('風險') || q.includes('疑慮') || q.includes('看空')) {
+            const riskTweets = tickerTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('跌'))));
+            if (riskTweets.length > 0) {
+              let riskHtml = `⚠️ <b>關於 \\$${symbol} 被提及的風險與疑慮：</b><br>`;
+              riskTweets.slice(0, 3).forEach(t => {
+                riskHtml += `• <b>[${t.date}]</b> ${t.summary || t.translation_zh || t.text} (<a href="${t.url}" target="_blank" class="text-cyan-400 hover:underline">來源</a>)<br>`;
+              });
+              appendChatMessage('ai', riskHtml);
+            } else {
+              appendChatMessage('ai', `✅ <b>\\$${symbol}</b> 在歷史推文中未出現顯著的看空或風險警語。`);
+            }
+            return;
+          }
+
           let analysisHtml = `
             🎯 <b>\\$${symbol} 即時論點脈絡分析：</b><br>
             • <b>所屬板塊：</b>${qData.sector || '科技'}<br>
@@ -2433,15 +2505,17 @@ def generate_html(tweets, ticker_counts, recent_tickers, stock_quotes):
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html_rendered)
-    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML} (方向二：週期切換與圓點直達推文高亮已全面就緒)", flush=True)
+    print(f"✅ Burak 儀表板成功產出至 {OUTPUT_HTML}", flush=True)
 
 if __name__ == "__main__":
     tweets_raw = load_tweets(TWEETS_FILE)
     sentiment_cache = load_cache(CACHE_FILE)
     cleaned_tweets, counts, recent_tickers = clean_tweet_data(tweets_raw, sentiment_cache)
     
+    # 優先抓取高頻提及標的
+    high_freq_tickers = [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:80]]
     all_sector_symbols = [s for sub in SECTOR_MAPPING.values() for s in sub]
-    combined_target_list = list(dict.fromkeys(recent_tickers + all_sector_symbols + [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:60]]))[:110]
+    combined_target_list = list(dict.fromkeys(recent_tickers + high_freq_tickers + all_sector_symbols))[:110]
     
     stock_quotes = fetch_stock_quotes_and_fundamentals(combined_target_list)
     generate_html(cleaned_tweets, counts, recent_tickers, stock_quotes)
