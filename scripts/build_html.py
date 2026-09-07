@@ -1,9 +1,13 @@
 import json
 import os
 import re
+import logging
 from datetime import datetime
 import yfinance as yf
 import pandas as pd
+
+# 抑制 yfinance 冗餘終端機錯誤日誌
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 # ==========================================
 # 參數設定區 (Burak Finance 專屬)
@@ -16,7 +20,7 @@ OUTPUT_HTML = "docs/index.html"
 
 TWITTER_EPOCH = 1288834974657
 
-# 常見錯別字與代號別名校正表
+# 常見美股筆誤校正字典
 TICKER_ALIASES = {
     "APPL": "AAPL",
     "QLCM": "QCOM",
@@ -24,7 +28,13 @@ TICKER_ALIASES = {
     "GOOG": "GOOGL"
 }
 
-# 排除非美股代號（加密貨幣或雜訊）
+# 國際市場代碼轉換表 (推文代號 -> Yahoo Finance 擷取代號)
+TICKER_FETCH_MAP = {
+    "SIVE": "SIVE.ST",  # 瑞典斯德哥爾摩證交所 (Sivers Semiconductors)
+    "SOI": "SOI.PA"     # 泛歐巴黎交易所 (Soitec)
+}
+
+# 排除非股票雜訊與加密貨幣
 CRYPTO_BLACKLIST = {
     "USD", "USDT", "BTC", "ETH", "SOL", "DOGE", "XRP", "CAD", "EUR", "ATH",
     "CEO", "CFO", "CTO", "AI", "FOMC", "FED", "CPI", "PPI", "GDP", "DD",
@@ -39,15 +49,15 @@ SECTOR_MAPPING = {
     ],
     "半導體設備與封測": [
         "AMAT", "ASML", "LRCX", "KLAC", "AEHR", "AMKR", "ONTO", "CAMT", "TER", "ICHR", 
-        "FORM", "COHR", "ACLS", "UCTT", "KLIC"
+        "FORM", "COHR", "ACLS", "UCTT", "KLIC", "SOI"
     ],
     "AI 算力與高速互連": [
         "NVDA", "AMD", "AVGO", "MRVL", "ARM", "ALAB", "INTC", "TSM", "QCOM", "CRDO", 
         "POET", "MTSI", "AOSL", "DIOD", "SMCI", "TSEM", "INDI", "LSCC", "AMBA"
     ],
     "光通訊與雷射網通": [
-        "AAOI", "LITE", "COHR", "POET", "CIEN", "FN", "SIVE", "GLW", "CBRS", "ACIA", 
-        "HLIT", "EXTR", "CALX", "INFN"
+        "AAOI", "LITE", "COHR", "POET", "CIEN", "FN", "GLW", "CBRS", "ACIA", 
+        "HLIT", "EXTR", "CALX", "INFN", "SIVE"
     ],
     "記憶體與儲存設備": [
         "SNDK", "MU", "WDC", "PSTG", "STX", "NTAP", "SKHY", "YMTC"
@@ -335,13 +345,19 @@ def clean_tweet_data(raw_tweets, sentiment_cache):
 
 def fetch_stock_quotes_and_fundamentals(tickers):
     """
-    【旗艦行情引擎】：
-    1. yf.download 平行批次下載 1 年日 K 數據
-    2. 自動讀寫 data/stock_quotes_cache.json
-    3. 遭遇 Yahoo Finance 限流時，自動從快取回填歷史走勢與報價
+    【國際化行情引擎】：
+    1. 自動將非美股代號（SIVE -> SIVE.ST, SOI -> SOI.PA）轉譯為國際市場代碼
+    2. yf.download 平行批次下載 1 年日 K 數據
+    3. 針對 SPY / QQQ 等指數型 ETF 進行財報防禦，避免 404 報錯
+    4. 支援 stock_quotes_cache.json 限流回填
     """
     print(f"📈 正在平行批次擷取 {len(tickers)} 個標的行情與估值...", flush=True)
-    
+
+    # 建立原標的與擷取代號的映射
+    symbol_to_fetch = {sym: TICKER_FETCH_MAP.get(sym, sym) for sym in tickers}
+    fetch_to_symbol = {v: k for k, v in symbol_to_fetch.items()}
+    fetch_list = list(set(symbol_to_fetch.values()))
+
     # 讀取本地快取
     cached_quotes = {}
     if os.path.exists(QUOTES_CACHE_FILE):
@@ -351,12 +367,12 @@ def fetch_stock_quotes_and_fundamentals(tickers):
         except Exception as e:
             print(f"⚠️ 讀取行情快取失敗: {e}")
 
-    # 平行批次下載日 K 歷史數據
+    # 平行批次下載歷史日 K
     batch_hist = {}
     try:
         print("  ⏳ 執行 yf.download 平行下載中...", flush=True)
         hist_df = yf.download(
-            tickers=tickers,
+            tickers=fetch_list,
             period="1y",
             interval="1d",
             group_by="ticker",
@@ -364,9 +380,10 @@ def fetch_stock_quotes_and_fundamentals(tickers):
             progress=False
         )
         if not hist_df.empty:
-            for sym in tickers:
+            for f_sym in fetch_list:
+                orig_sym = fetch_to_symbol.get(f_sym, f_sym)
                 try:
-                    df_sym = hist_df[sym] if len(tickers) > 1 else hist_df
+                    df_sym = hist_df[f_sym] if len(fetch_list) > 1 else hist_df
                     df_sym = df_sym.dropna(subset=["Close"])
                     series_data = []
                     for idx_dt, row_data in df_sym.iterrows():
@@ -377,17 +394,22 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                                 "c": round(float(c_val), 2)
                             })
                     if series_data:
-                        batch_hist[sym] = series_data
+                        batch_hist[orig_sym] = series_data
                 except Exception:
                     pass
     except Exception as batch_err:
         print(f"  ⚠️ yf.download 批次歷史線下載警告: {batch_err}")
 
     quotes = {}
+    etf_symbols = set(SECTOR_MAPPING.get("指數與主題科技 ETF", []) + ["SPY", "QQQ", "IWM", "SMH", "SOXX", "XBI", "ARKK", "IBIT"])
+
     for symbol in tickers:
+        fetch_sym = symbol_to_fetch.get(symbol, symbol)
         prev_cache = cached_quotes.get(symbol, {})
+        is_etf = symbol in etf_symbols
+
         try:
-            ticker_obj = yf.Ticker(symbol)
+            ticker_obj = yf.Ticker(fetch_sym)
             fast = getattr(ticker_obj, "fast_info", None)
             info = ticker_obj.info or {}
             
@@ -396,6 +418,7 @@ def fetch_stock_quotes_and_fundamentals(tickers):
             high_52 = getattr(fast, "year_high", None) or info.get("fiftyTwoWeekHigh")
             low_52 = getattr(fast, "year_low", None) or info.get("fiftyTwoWeekLow")
             volume = getattr(fast, "last_volume", None) or getattr(fast, "regular_market_volume", None) or info.get("volume")
+            currency = getattr(fast, "currency", None) or info.get("currency") or "USD"
 
             market_cap = getattr(fast, "market_cap", None) or info.get("marketCap")
             forward_pe = info.get("forwardPE")
@@ -403,18 +426,21 @@ def fetch_stock_quotes_and_fundamentals(tickers):
             price_to_sales = info.get("priceToSalesTrailing12Months")
             revenue_growth = info.get("revenueGrowth")
 
+            # ETF 專屬防禦：若是 ETF 則跳過 calendar 查詢，消除 404 報錯
             earnings_date_str = None
-            try:
-                cal = ticker_obj.calendar
-                if isinstance(cal, dict) and "Earnings Date" in cal and len(cal["Earnings Date"]) > 0:
-                    earnings_date_str = str(cal["Earnings Date"][0])[:10]
-            except Exception:
-                pass
+            if is_etf:
+                earnings_date_str = "指數 ETF (無財報)"
+            else:
+                try:
+                    cal = ticker_obj.calendar
+                    if isinstance(cal, dict) and "Earnings Date" in cal and len(cal["Earnings Date"]) > 0:
+                        earnings_date_str = str(cal["Earnings Date"][0])[:10]
+                except Exception:
+                    pass
 
             sector_name = resolve_sector(symbol, info)
             history_data = batch_hist.get(symbol) or prev_cache.get("history", [])
 
-            # 若即時價格抓取成功
             if current_price is not None and float(current_price) > 0:
                 change = (current_price - prev_close) if prev_close else 0.0
                 change_pct = ((change / prev_close) * 100) if prev_close else 0.0
@@ -424,6 +450,7 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                     "prevClose": round(float(prev_close), 2) if prev_close else round(float(current_price), 2),
                     "change": round(float(change), 2),
                     "changePct": round(float(change_pct), 2),
+                    "currency": currency,
                     "high52": round(float(high_52), 2) if high_52 else prev_cache.get("high52"),
                     "low52": round(float(low_52), 2) if low_52 else prev_cache.get("low52"),
                     "volume": int(volume) if volume else 0,
@@ -436,21 +463,21 @@ def fetch_stock_quotes_and_fundamentals(tickers):
                     "sector": sector_name,
                     "history": history_data
                 }
+                print(f"  ✅ ${symbol} ({fetch_sym}): {quotes[symbol]['price']} {currency} ({quotes[symbol]['changePct']:+.2f}%)", flush=True)
             else:
-                # 觸發限流回填機制
                 if prev_cache and prev_cache.get("price"):
-                    print(f"  🔄 ${symbol} 遭遇限流，自動套用歷史快取數據", flush=True)
+                    print(f"  🔄 ${symbol} 採用快取數據", flush=True)
                     quotes[symbol] = prev_cache
                     quotes[symbol]["history"] = history_data
                 else:
-                    quotes[symbol] = {"sector": sector_name, "history": history_data}
+                    quotes[symbol] = {"sector": sector_name, "history": history_data, "currency": currency}
         except Exception:
             if prev_cache:
                 quotes[symbol] = prev_cache
             else:
-                quotes[symbol] = {"sector": resolve_sector(symbol), "history": []}
+                quotes[symbol] = {"sector": resolve_sector(symbol), "history": [], "currency": "USD"}
 
-    # 持久化寫入快取
+    # 儲存行情持久化快取
     try:
         os.makedirs(os.path.dirname(QUOTES_CACHE_FILE), exist_ok=True)
         with open(QUOTES_CACHE_FILE, "w", encoding="utf-8") as f:
@@ -516,7 +543,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             Burak Tracker
             <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Live</span>
           </h1>
-          <p class="text-xs text-slate-400 hidden sm:block">美股社群情報、多空疊圖與 AI 投資論點脈絡</p>
+          <p class="text-xs text-slate-400 hidden sm:block">美股與歐股科技情報、多空疊圖與 AI 投資論點脈絡</p>
         </div>
       </div>
 
@@ -624,7 +651,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div>
             <div class="flex items-baseline gap-2">
               <span class="text-3xl font-bold font-mono text-white" id="quote-price">$0.00</span>
-              <span class="text-xs text-slate-400" id="quote-currency-label">USD</span>
+              <span class="text-xs text-slate-400 font-mono" id="quote-currency-label">USD</span>
               <span id="quote-return-badge" class="ml-2 text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hidden">
                 首次提及以來 +0.0%
               </span>
@@ -722,7 +749,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- 搜尋、排序與觀點篩選 -->
     <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
       <div class="flex items-center gap-2 flex-1 max-w-lg">
-        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的（例如: HIMS, NBIS, AMAT, RKLB）..." 
+        <input type="text" id="search-input" placeholder="搜尋推文內容、摘要或 $標的（例如: HIMS, NBIS, AMAT, RKLB, SIVE）..." 
           class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition" />
         
         <select id="sort-select" onchange="changeSort(this.value)" class="bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-amber-500 transition cursor-pointer shrink-0">
@@ -794,7 +821,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 浮動 AI 智能對話助理 (支援 SSE 流式打字與多輪連續追問) -->
+  <!-- 浮動 AI 智能對話助理 -->
   <div class="fixed bottom-6 right-6 z-50">
     <button id="ai-chat-btn" onclick="toggleChatDrawer()" class="bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2 hover:scale-105 transition-all">
       💬 <span class="text-sm">問問 Burak AI</span>
@@ -1044,10 +1071,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
 
       const defaultCandidates = [
+        'gemini-3.8-flash',
         'gemini-3.6-flash',
         'gemini-3.0-flash',
         'gemini-2.0-flash',
-        'gemini-2.0-flash-exp',
         'gemini-pro'
       ];
 
@@ -1083,7 +1110,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         mentionedTickers.forEach(sym => {
           const q = stockQuotes[sym];
-          if (q) selectedQuotes.push(`$${sym}: 現價 $${q.price || '-'} (漲跌幅: ${q.changePct || 0}%, PE: ${q.forwardPE || '-'}, PS: ${q.priceToSales || '-'}, 板塊: ${q.sector || '科技'}, 財報: ${q.earningsDate || '未定'})`);
+          if (q) selectedQuotes.push(`$${sym}: 現價 ${q.price || '-'} ${q.currency || 'USD'} (漲跌幅: ${q.changePct || 0}%, PE: ${q.forwardPE || '-'}, PS: ${q.priceToSales || '-'}, 板塊: ${q.sector || '科技'}, 財報: ${q.earningsDate || '未定'})`);
         });
       }
 
@@ -1095,7 +1122,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       if (selectedQuotes.length < 15) {
         Object.entries(stockQuotes).slice(0, 15).forEach(([k, v]) => {
-          const str = `$${k}: $${v.price || '-'} (PE: ${v.forwardPE || '-'}, 板塊: ${v.sector || '科技'})`;
+          const str = `$${k}: ${v.price || '-'} ${v.currency || 'USD'} (PE: ${v.forwardPE || '-'}, 板塊: ${v.sector || '科技'})`;
           if (!selectedQuotes.includes(str)) selectedQuotes.push(str);
         });
       }
@@ -1111,7 +1138,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const candidateModels = await fetchOnlineGeminiModels(cleanKey);
 
       const smartContext = buildSmartContext(userText);
-      const systemInstructionText = `你是一位專業的美股社群量化情報分析專家，請基於以下【Burak Finance】社群情報與美股數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n${smartContext}`;
+      const systemInstructionText = `你是一位專業的美股與歐股科技社群量化情報分析專家，請基於以下【Burak Finance】社群情報與市場數據回答問題。請使用繁體中文、語氣精準客觀、以數據與推文論點為依據：\\n\\n${smartContext}`;
 
       const contentsPayload = [];
       if (chatContextHistory.length === 0) {
@@ -1321,7 +1348,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     function importWatchlist() {
-      const input = prompt('請貼上自選股 JSON 陣列 (例如: ["HIMS", "AMAT", "NVDA"])：');
+      const input = prompt('請貼上自選股 JSON 陣列 (例如: ["HIMS", "AMAT", "NVDA", "SIVE"])：');
       if (!input) return;
       try {
         const parsed = JSON.parse(input.trim());
@@ -1509,7 +1536,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       };
     }
 
-    // 點擊圓點直達推文卡片並觸發高亮動畫
     function scrollToTweet(tweetId) {
       if (!tweetId) return;
       let targetEl = document.getElementById(`tweet-card-${tweetId}`);
@@ -1532,7 +1558,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // 走勢圖週期切換 (1M / 3M / 6M / 1Y)
     function setChartRange(range) {
       currentChartRange = range;
       document.querySelectorAll('.chart-range-btn').forEach(btn => {
@@ -1546,7 +1571,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // 股價走勢與多空點位疊圖 (支援縮放與點擊事件)
     function renderPriceOverlayChart(ticker) {
       if (!ticker) return;
       const quote = stockQuotes[ticker];
@@ -1661,7 +1685,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 label: function(context) {
                   const d = context.label;
                   const price = context.parsed.y;
-                  let lines = [`股價：$${price}`];
+                  let lines = [`收盤價：${price} ${stockQuotes[ticker]?.currency || 'USD'}`];
                   const tweetsOnDay = tweetMap[d];
                   if (tweetsOnDay && tweetsOnDay.length > 0) {
                     tweetsOnDay.forEach(t => {
@@ -1756,8 +1780,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
 
       if (data && data.price) {
-        document.getElementById('quote-price').innerText = `$${data.price.toFixed(2)}`;
-        currencyLabel.innerText = 'USD';
+        document.getElementById('quote-price').innerText = `${data.price.toFixed(2)}`;
+        currencyLabel.innerText = data.currency || 'USD';
         
         const isPositive = data.change >= 0;
         const changeVal = `${isPositive ? '+' : ''}${data.change.toFixed(2)}`;
@@ -1766,7 +1790,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         changeEl.innerHTML = `
           <span id="quote-change">${changeVal}</span>
           <span id="quote-change-pct">${changePctVal}</span>
-          <span class="text-xs font-normal text-slate-400">相對前收盤</span>
+          <span class="text-xs font-normal text-slate-400">相對前一日收盤</span>
         `;
         changeEl.className = `flex items-center gap-2 mt-0.5 text-sm font-semibold font-mono ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`;
 
@@ -1779,8 +1803,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         document.getElementById('val-earnings-date').innerText = data.earningsDate ? data.earningsDate : '即將公布';
 
-        document.getElementById('quote-low52').innerText = data.low52 ? `$${data.low52.toFixed(2)}` : '-';
-        document.getElementById('quote-high52').innerText = data.high52 ? `$${data.high52.toFixed(2)}` : '-';
+        document.getElementById('quote-low52').innerText = data.low52 ? `${data.low52.toFixed(2)}` : '-';
+        document.getElementById('quote-high52').innerText = data.high52 ? `${data.high52.toFixed(2)}` : '-';
 
         if (data.low52 && data.high52 && data.high52 > data.low52) {
           const rangePct = Math.max(0, Math.min(100, Math.round(((data.price - data.low52) / (data.high52 - data.low52)) * 100)));
@@ -1792,7 +1816,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
       } else {
         document.getElementById('quote-price').innerText = '即時行情模式';
-        currencyLabel.innerText = '';
+        currencyLabel.innerText = data?.currency || 'USD';
         changeEl.innerHTML = '<span class="text-xs font-normal text-amber-400 font-mono">可點擊「即時 K 線」展開走勢</span>';
         changeEl.className = 'flex items-center gap-2 mt-0.5 text-sm font-medium';
         document.getElementById('val-mkt-cap').innerText = '-';
@@ -1874,7 +1898,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       const rows = [
         ['所屬板塊', dataA.sector || '-', dataB.sector || '-', false, false],
-        ['即時股價', dataA.price ? `$${dataA.price}` : '-', dataB.price ? `$${dataB.price}` : '-', false, false],
+        ['即時股價', dataA.price ? `${dataA.price} ${dataA.currency || 'USD'}` : '-', dataB.price ? `${dataB.price} ${dataB.currency || 'USD'}` : '-', false, false],
         ['單日漲跌幅', 
           dataA.changePct !== undefined && dataA.changePct !== null ? `${dataA.changePct > 0 ? '+' : ''}${dataA.changePct}%` : '-', 
           dataB.changePct !== undefined && dataB.changePct !== null ? `${dataB.changePct > 0 ? '+' : ''}${dataB.changePct}%` : '-',
@@ -2343,7 +2367,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let resHtml = '🚀 <b>目前社群立場最偏多的精選標的：</b><br>';
         bullishList.forEach(([sym, data]) => {
           const qData = stockQuotes[sym];
-          const priceStr = qData && qData.price ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(1)}%)` : '';
+          const priceStr = qData && qData.price ? `${qData.price} ${qData.currency || 'USD'} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(1)}%)` : '';
           resHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button> ${priceStr}：<b>${data.bullish} 則看多</b> (多方佔比 ${Math.round(data.bullish/data.total*100)}%)<br>`;
         });
         appendChatMessage('ai', resHtml);
@@ -2358,7 +2382,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         let resHtml = '💰 <b>前瞻本益比 (Forward P/E) 最具估值吸引力標的：</b><br>';
         valueTickers.forEach(([sym, data]) => {
-          resHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button>：Fwd P/E <b>${data.forwardPE}x</b> ｜ ${data.sector} ｜ 現價 $${data.price || '-'}<br>`;
+          resHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button>：Fwd P/E <b>${data.forwardPE}x</b> ｜ ${data.sector} ｜ 現價 ${data.price || '-'} ${data.currency || 'USD'}<br>`;
         });
         appendChatMessage('ai', resHtml);
         return;
@@ -2402,7 +2426,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const qData = stockQuotes[sym] || {};
           const tList = allTweets.filter(t => t.tickers.includes(sym));
           const latest = tList[0];
-          wlHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button>：現價 $${qData.price || '-'} (${qData.changePct>=0?'+':''}${qData.changePct || 0}%) ｜ 最新立場：<b>${latest ? latest.sentiment : '未提及'}</b><br>`;
+          wlHtml += `• <button onclick="filterByTicker('${sym}')" class="text-amber-400 font-bold font-mono">\\$${sym}</button>：現價 ${qData.price || '-'} ${qData.currency || 'USD'} (${qData.changePct>=0?'+':''}${qData.changePct || 0}%) ｜ 最新立場：<b>${latest ? latest.sentiment : '未提及'}</b><br>`;
         });
         appendChatMessage('ai', wlHtml);
         return;
@@ -2418,7 +2442,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const chronological = [...tickerTweets].sort((a, b) => (a.iso_date || a.date).localeCompare(b.iso_date || b.date));
           const latest = chronological[chronological.length - 1];
           const qData = stockQuotes[symbol] || {};
-          const priceText = qData.price ? `$${qData.price.toFixed(2)} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)` : '即時行情模式';
+          const priceText = qData.price ? `${qData.price} ${qData.currency || 'USD'} (${qData.changePct>=0?'+':''}${qData.changePct.toFixed(2)}%)` : '即時行情模式';
 
           if (q.includes('風險') || q.includes('疑慮') || q.includes('看空')) {
             const riskTweets = tickerTweets.filter(t => t.sentiment === 'Bearish' || (t.summary && (t.summary.includes('風險') || t.summary.includes('跌'))));
@@ -2512,7 +2536,6 @@ if __name__ == "__main__":
     sentiment_cache = load_cache(CACHE_FILE)
     cleaned_tweets, counts, recent_tickers = clean_tweet_data(tweets_raw, sentiment_cache)
     
-    # 優先抓取高頻提及標的
     high_freq_tickers = [t[0] for t in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:80]]
     all_sector_symbols = [s for sub in SECTOR_MAPPING.values() for s in sub]
     combined_target_list = list(dict.fromkeys(recent_tickers + high_freq_tickers + all_sector_symbols))[:110]
