@@ -2872,5 +2872,11 @@
     "sentiment": "Neutral",
     "summary": "推文僅包含外部連結，無實質市場情報。",
     "translation_zh": "https://t.co/ZdVRL3p7Gs"
+  },
+  "2097345688405201347": {
+    "id": "2097345688405201347",
+    "sentiment": "Bullish",
+    "summary": "本週獲利17%，將迎來通膨數據與FOMC會議考驗。",
+    "translation_zh": "本週投資組合上漲了 +17.26%。接下來的幾天至關重要。週四公佈 PPI，週五公佈 CPI，下週則是 FOMC 會議。接下來隨時可能發生很多變化。"
   }
 }
