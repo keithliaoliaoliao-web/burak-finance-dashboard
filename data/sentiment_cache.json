@@ -3058,5 +3058,11 @@
     "sentiment": "Neutral",
     "summary": "$OPEN獲利3倍已出場，現跌回原點證明入袋為安。",
     "translation_zh": "去年八月以 2 美元買入 $OPEN，並在 7 美元賣出。四個月內賺了近 3 倍。今天它又跌回 2.80 美元了。有時候賺了錢就該果斷收手，頭也不回。"
+  },
+  "2098135519775322496": {
+    "id": "2098135519775322496",
+    "sentiment": "Bearish",
+    "summary": "質疑員工在 Anthropic IPO 前夕離職的時機。",
+    "translation_zh": "「我今天從 Anthropic 離職了」可能是 X 歷史上最強的爆款開場白。奇怪的是，他竟然在 IPO 前夕離開。🤔"
   }
 }
