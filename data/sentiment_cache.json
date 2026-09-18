@@ -3358,5 +3358,11 @@
     "sentiment": "Neutral",
     "summary": "諷刺質疑NBIS受CRWV股權稀釋牽連下跌的合理性",
     "translation_zh": "$NBIS 下跌是因為 $CRWV 增資稀釋？真是太有道理了⋯⋯"
+  },
+  "2100930543340666959": {
+    "id": "2100930543340666959",
+    "sentiment": "Bullish",
+    "summary": "$NBIS 是最好的新型雲端服務業者。",
+    "translation_zh": "$NBIS 是最好的新型雲端（neocloud）公司。"
   }
 }
