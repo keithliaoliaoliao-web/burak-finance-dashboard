@@ -3472,5 +3472,11 @@
     "sentiment": "Bullish",
     "summary": "證實無視記憶體恐懼的觀點，美光與海力士股價大幅飆升。",
     "translation_zh": "我就說過別理會記憶體市場的恐懼。自那篇貼文發布以來，$MU 上漲了 25%，$SKHY 上漲了 45%。"
+  },
+  "2102475482679672883": {
+    "id": "2102475482679672883",
+    "sentiment": "Bullish",
+    "summary": "半導體PEG極低，獲利高速成長顯示並未被高估。",
+    "translation_zh": "有人說半導體股「太貴了」。\n\n但仔細看：👇\n\n$NVDA 29倍 | PEG 0.23\n$MU 23倍 | PEG 0.16\n$TSM 32倍 | PEG 0.28\n$AVGO 25倍 | PEG 0.20\n$QCOM 16倍 | PEG 0.18\n$AMAT 36倍 | PEG 0.36\n$ASML 38倍 | PEG 0.34\n\n別只看價格，看看它們的獲利成長表現。"
   }
 }
