@@ -3610,5 +3610,17 @@
     "sentiment": "Bullish",
     "summary": "升息與高殖利率下那指仍創新高，空方再度看錯。",
     "translation_zh": "利率上升。十年期殖利率達5%。聯準會三年來首次升息。那斯達克指數再創新高。末日看空者又一次預測失敗。"
+  },
+  "2104048633574498806": {
+    "id": "2104048633574498806",
+    "sentiment": "Bullish",
+    "summary": "科技巨頭資本支出與業績強勁，力證AI非泡沫。",
+    "translation_zh": "AI 泡沫的頭條新聞從未停歇。\n\n• $AMD 市值剛突破 1 兆美元。\n• $AMZN 資本支出高達約 2,200 億美元。\n• $GOOGL 財測指引達 1,950 億至 2,050 億美元。\n• $NBIS 漲價後依然被搶購一空。\n• $MU 本季財測指引達 500 億美元，一年前僅為 113 億美元。\n\n泡沫可印不出 86% 這種成績。"
+  },
+  "2103984964266275012": {
+    "id": "2103984964266275012",
+    "sentiment": "Bullish",
+    "summary": "AI與算力基建股未來兩年營收預估迎來爆發成長",
+    "translation_zh": "預估未來 2 年營收成長率：\n\nNebius：+2,200%\nIREN：+1,030%\n美光 (Micron)：+560%\nCoreWeave：+390%\nCipher：+260%\nApplied Digital：+230%\n輝達 (Nvidia)：+220%\nPalantir：+174%\n博通 (Broadcom)：+170%\n超微 (AMD)：+154%\nRocket Lab：+130%\n甲骨文 (Oracle)：+95%\nArista：+83%"
   }
 }
