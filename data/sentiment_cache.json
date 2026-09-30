@@ -3670,5 +3670,11 @@
     "sentiment": "Neutral",
     "summary": "推文僅包含外部短網址，無實質文字可供分析。",
     "translation_zh": "https://t.co/B5LKdhjDlV"
+  },
+  "2104943018671329333": {
+    "id": "2104943018671329333",
+    "sentiment": "Bullish",
+    "summary": "BE 股價目前正瘋狂暴漲。",
+    "translation_zh": "$BE 漲勢太瘋狂了！"
   }
 }
