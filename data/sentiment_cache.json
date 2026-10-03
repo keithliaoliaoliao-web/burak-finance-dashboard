@@ -3802,5 +3802,11 @@
     "sentiment": "Neutral",
     "summary": "僅包含外部連結，無實質內文可供分析。",
     "translation_zh": "https://t.co/AmQ8Iq5OLm（推文僅包含外部網址連結）"
+  },
+  "2106032476636545068": {
+    "id": "2106032476636545068",
+    "sentiment": "Bullish",
+    "summary": "投資組合單日表現亮眼，情緒極度樂觀。",
+    "translation_zh": "今天投資組合的表現真是太不可思議了🎉"
   }
 }
