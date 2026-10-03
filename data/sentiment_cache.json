@@ -3808,5 +3808,11 @@
     "sentiment": "Bullish",
     "summary": "投資組合單日表現亮眼，情緒極度樂觀。",
     "translation_zh": "今天投資組合的表現真是太不可思議了🎉"
+  },
+  "2106447439687528453": {
+    "id": "2106447439687528453",
+    "sentiment": "Bullish",
+    "summary": "諷刺網紅錯看NKE看衰NBIS，後者大漲179%",
+    "translation_zh": "我還記得某些知名網紅當時說 $NKE 很「便宜」，同時警告投資人 $NBIS「風險太高」。\n\n$NBIS：+179%\n$NKE：-46%"
   }
 }
