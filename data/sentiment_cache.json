@@ -3880,5 +3880,17 @@
     "sentiment": "Bullish",
     "summary": "看好 NBIS 表現，認為其將為投資者帶來回報。",
     "translation_zh": "$NBIS 不會虧待你的。"
+  },
+  "2107191594726416793": {
+    "id": "2107191594726416793",
+    "sentiment": "Bearish",
+    "summary": "$ASTS技術線型惡化，跌破所有主要均線。",
+    "translation_zh": "$ASTS 的走勢圖看起來很糟糕，目前股價跌破所有主要均線。該買進還是賣出？"
+  },
+  "2106999525470519733": {
+    "id": "2106999525470519733",
+    "sentiment": "Bullish",
+    "summary": "AI用電量預期暴增，電力基建股將大幅受惠。",
+    "translation_zh": "預計到 2026 年，AI 伺服器將消耗 53.8 GW 的電力；到 2030 年將達到約 264 GW，佔比超過一半。以下這些公司有望成為巨大的受惠者：$VST $CEG $GEV $ETN $PWR $TLN $VRT $BE"
   }
 }
