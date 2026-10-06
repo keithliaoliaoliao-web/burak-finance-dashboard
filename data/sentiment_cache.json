@@ -3892,5 +3892,11 @@
     "sentiment": "Bullish",
     "summary": "AI用電量預期暴增，電力基建股將大幅受惠。",
     "translation_zh": "預計到 2026 年，AI 伺服器將消耗 53.8 GW 的電力；到 2030 年將達到約 264 GW，佔比超過一半。以下這些公司有望成為巨大的受惠者：$VST $CEG $GEV $ETN $PWR $TLN $VRT $BE"
+  },
+  "2107527703972725178": {
+    "id": "2107527703972725178",
+    "sentiment": "Neutral",
+    "summary": "分享 NBIS 投資人當前心情與反應的迷因",
+    "translation_zh": "$NBIS 投資人現在的樣子"
   }
 }
